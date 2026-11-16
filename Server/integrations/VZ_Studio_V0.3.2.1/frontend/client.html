@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VZ 用户控制台</title><link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main class="client-shell scene-board-shell">
+  <section class="client-left">
+    <div class="client-title"><div class="brand-mark">VZ</div><div><h1>机构控制与仿真</h1><div class="panel-note">场景编排 · 单模型控制执行</div></div><select id="modelSelect" aria-label="选择模型"></select></div>
+    <div class="client-card client-upper-card">
+      <div class="mini-tabs"><button class="tab active" data-upper="presets">控制逻辑</button><button class="tab" data-upper="memories">记忆位置</button><button class="tab" data-upper="external">外部表格</button><span class="upper-tab-spacer"></span><button id="addMemory" class="secondary compact-action hidden">＋ 创建记忆位置</button></div>
+      <div id="upperContent" class="preset-list"></div>
+    </div>
+    <details class="client-card control-detail-drawer">
+      <summary><span>当前模型动作细节</span><small>原有单模型控制工具继续保留</small></summary>
+      <div class="legacy-step-head"><button id="undoPosition" class="primary compact-step-action undo-position-action" title="回退到上一步初始位置" disabled>↶</button><button id="saveSteps" class="ghost compact-step-action">保存步骤</button><button id="addStep" class="secondary compact-step-action">＋ 添加步骤</button><button id="clearSteps" class="ghost compact-step-action">清空</button></div>
+      <div id="steps" class="steps-list graph-step-list"></div>
+    </details>
+    <div class="simulate-bar"><label class="render-quality-switch" title="切换用户动画渲染质量"><span class="render-quality-text" id="renderModeLabel">快速渲染</span><input id="renderQualityToggle" type="checkbox" aria-label="切换快速渲染和高质量渲染"><span class="render-quality-track" aria-hidden="true"></span></label><button id="saveUserSettings" class="ghost client-settings-save" title="保存用户端渲染质量设置">保存设置</button><button id="simulate" class="primary">▶ 发送并仿真</button></div>
+  </section>
+
+  <section class="client-scene-region" aria-label="场景与控制看板">
+    <section id="sceneDropZone" class="client-viewer scene-viewer-pane" aria-label="动画场景；可拖入右侧模型">
+      <iframe id="animationFrame" title="VZ 动画播放区"></iframe>
+      <div id="clientEmpty" class="client-empty"><div><div class="brand-mark" style="margin:0 auto 14px">3D</div><strong>正在准备模型动画</strong><p>从右侧拖入模型，或选择已有场景模型</p></div></div>
+      <div id="sceneCoordinateBadge" class="scene-coordinate-badge">硬点 — · H 点 —</div>
+      <div class="scene-drop-hint">拖拽右侧渲染缩略图到这里加入场景</div>
+    </section>
+    <div id="sceneVerticalSplitter" class="scene-vertical-splitter" role="separator" aria-orientation="horizontal" aria-label="调整动画与控制看板高度"></div>
+    <section class="scene-control-board">
+      <div class="scene-board-head"><div><strong>场景控制看板</strong><small>时间轴 1 s 间隔 · 每个驱动显示最早开始至最晚结束</small></div><button id="sceneBoardClear" class="ghost" title="清空场景模型">清空</button></div>
+      <div id="sceneTimeSeriesTabs" class="scene-time-series-tabs" aria-label="当前模型时序分页"></div>
+      <div id="sceneControlRows" class="scene-control-rows"></div>
+    </section>
+  </section>
+
+  <aside class="client-model-library scene-model-library" aria-label="模型库">
+    <div class="client-library-head"><div><strong>模型库</strong><small>分类浏览 · 正视图缩略图</small></div></div>
+    <div id="clientLevel1Folders" class="client-folder-strip level-1" aria-label="一级文件夹"></div>
+    <div id="clientLevel2Folders" class="client-folder-strip level-2" aria-label="二级文件夹"></div>
+    <div id="clientModelLibrary" class="client-library-list"></div>
+  </aside>
+</main>
+<section id="clientTimeSeriesEditor" class="client-time-series-editor hidden" aria-label="用户编辑时序界面">
+  <header class="client-ts-editor-head"><button id="clientEditorBack" class="ghost">← 返回场景</button><div><strong>用户编辑时序</strong><small id="clientEditorMeta">双击色块修改运动段</small></div><div class="client-ts-editor-controls"><label>横向 <input id="clientEditorScaleX" type="range" min="60" max="220" value="100"><output id="clientEditorScaleXValue">100%</output></label><label>纵向 <input id="clientEditorScaleY" type="range" min="70" max="180" value="100"><output id="clientEditorScaleYValue">100%</output></label><label class="inline-check"><input id="clientEditorCursor" type="checkbox">游标</label><label class="inline-check"><input id="clientEditorSortDesc" type="checkbox">倒序</label></div></header>
+  <div id="clientEditorSeriesTabs" class="scene-time-series-tabs client-editor-tabs"></div>
+  <div id="clientEditorGantt" class="client-ts-gantt"></div>
+</section>
+<div id="modalRoot"></div><div id="toasts" class="toast-stack"></div>
+<script src="/static/client.js"></script>
+</body></html>

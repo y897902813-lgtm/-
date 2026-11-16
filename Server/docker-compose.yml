@@ -1,0 +1,22 @@
+services:
+  studio:
+    build: .
+    ports:
+      - "${MUJOCO_STUDIO_PORT:-8765}:${MUJOCO_STUDIO_PORT:-8765}"
+    volumes:
+      - ./data:/data
+    environment:
+      # Use `python docker_ports.py up --build -d` to forward ports.json to
+      # Compose host mapping and the container. Raw `docker compose` keeps defaults.
+      MUJOCO_STUDIO_PORT: "${MUJOCO_STUDIO_PORT:-}"
+      VZ_PORT: "${VZ_PORT:-}"
+      MUJOCO_STUDIO_CLIENT_PORT: "${MUJOCO_STUDIO_CLIENT_PORT:-}"
+      MUJOCO_STUDIO_NO_BROWSER: "1"
+      MUJOCO_STUDIO_DATA: "/data"
+      MUJOCO_STUDIO_SINGLE_USER: "0"
+      MUJOCO_STUDIO_DESKTOP: "0"
+      MUJOCO_STUDIO_ADMIN_PASSWORD: ${MUJOCO_STUDIO_ADMIN_PASSWORD:-}
+      MUJOCO_STUDIO_SECURE_COOKIE: ${MUJOCO_STUDIO_SECURE_COOKIE:-0}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://yice.byd.com/ai-gate/v1/chat/completions}
+      LLM_MODEL: ${LLM_MODEL:-DeepSeek-R1-Pro}

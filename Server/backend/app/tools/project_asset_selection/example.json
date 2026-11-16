@@ -1,0 +1,8 @@
+{
+  "project": {
+    "id": "project_example",
+    "name": "示例项目"
+  },
+  "selection_id": "0123456789abcdef0123456789abcdef",
+  "intent": "Web 上传完成后切换当前数模资源"
+}

@@ -1,0 +1,18 @@
+<mujoco model="legacy_default_scene">
+  <option gravity="0 0 0" integrator="implicitfast" cone="elliptic" impratio="10"/>
+  <statistic center="1 -0.8 1.1" extent=".35"/>
+  <visual><headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0.9 0.9 0.9"/><rgba haze="0.15 0.25 0.35 1"/><global azimuth="140" elevation="-20"/></visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="legacy_groundplane_texture" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="legacy_groundplane_material" texture="legacy_groundplane_texture" texuniform="true" texrepeat="5 5" reflectance="0.1"/>
+  </asset>
+  <worldbody>
+    <geom name="legacy_floor" size="0 0 0.05" type="plane" material="legacy_groundplane_material"/>
+    <camera mode="fixed" name="Customizedview" pos="0.35 -0.2 0.6" quat="-0.5 -0.5 0.5 0.5"/>
+    <camera mode="fixed" name="front_view" pos="0.8 -1 0.6" xyaxes="1 0 0 0 0 1" projection="orthographic" fovy="1.5"/>
+    <camera mode="fixed" name="side_view" pos="1.5 -0.405 0.8" xyaxes="0 1 0 0 0 1" projection="orthographic" fovy="1.5"/>
+    <camera mode="fixed" name="pov_view" pos="1.4 -0.405 0.97" xyaxes="0 1 0 -0.439 0 0.898" projection="orthographic" fovy="1.5"/>
+    <light diffuse=".9 .9 .9" pos="1.6 -0.5 5" dir="0 0 -4"/>
+  </worldbody>
+</mujoco>

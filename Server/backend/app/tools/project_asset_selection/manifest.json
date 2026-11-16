@@ -1,0 +1,9 @@
+{
+  "id": "project.asset_selection",
+  "name": "切换项目托管资产",
+  "version": "1.0.0",
+  "category": "project",
+  "effect": "write",
+  "schema_source": "schema.py:AssetSelectionInput",
+  "description": "只允许切换到当前项目 assets/mesh_selections/<selection_id> 的服务端托管资源。"
+}

@@ -1,0 +1,3 @@
+{
+  "ui:order": ["check_files", "loop", "playback_speed"]
+}

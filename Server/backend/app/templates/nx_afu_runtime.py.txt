@@ -1,0 +1,1013 @@
+# -*- coding: utf-8 -*-
+"""MuJoCo XML Tool V20.4 - generated NX AFU journal.
+
+Run this file from NX while the saved work part is open in Motion Simulation.
+Curve data is embedded below; no CSV or external helper module is required.
+"""
+
+import base64
+import bisect
+import hashlib
+import json
+import os
+import sys
+import traceback
+import zlib
+
+import NXOpen
+import NXOpen.CAE
+import NXOpen.Motion
+import NXOpen.UF
+
+
+PAYLOAD_B64 = "__MUJOCO_XML_TOOL_V20_4_PAYLOAD_B64__"
+YTYPE_ANGL = "angl"
+YTYPE_DISP = "disp"
+RESAMPLE_DX = 0.01
+NAME_MAX_LEN = 30
+NAME_MAX_BYTES = 60
+SET_FUNCTION_UNITS = True
+NEW_FN_TWO_STEP = True
+SKIP_HEALTHY_REFRESH = True
+SKIP_REBIND = True
+
+_ALLOWED_PUNCT = set("()[]" + "," + "." + "_" + "-" + "+" + ":" + "=" + "<>" + "|")
+_JTTYPE_MAP = {1: "rot", 2: "slide"}
+_DRIVER_ATTRS = {
+    YTYPE_ANGL: (
+        "MotionEulerAngle1", "MotionEulerAngle2", "MotionEulerAngle3",
+        "MotionRotation", "MotionAngular",
+    ),
+    YTYPE_DISP: (
+        "MotionTranslationZ", "MotionTranslationX", "MotionTranslationY",
+        "MotionTranslation1", "MotionTranslation",
+    ),
+}
+_enum_cache = {}
+_listing_window = None
+
+
+def _payload():
+    raw = zlib.decompress(base64.b64decode(PAYLOAD_B64.encode("ascii")))
+    data = json.loads(raw.decode("utf-8"))
+    if data.get("format") != "MUJOCO_XML_TOOL_NX_AFU":
+        raise RuntimeError("脚本中的曲线数据格式无效")
+    return data
+
+
+def _lw():
+    global _listing_window
+    if _listing_window is not None:
+        return _listing_window
+    try:
+        _listing_window = NXOpen.Session.GetSession().ListingWindow
+        _listing_window.Open()
+    except Exception:
+        _listing_window = None
+    return _listing_window
+
+
+def log(message):
+    text = str(message)
+    window = _lw()
+    try:
+        if window is not None:
+            window.WriteLine(text)
+            return
+    except Exception:
+        pass
+    try:
+        sys.stdout.write(text + "\n")
+    except Exception:
+        pass
+
+
+def _message(title, dialog_type, text):
+    try:
+        NXOpen.UI.GetUI().NXMessageBox.Show(title, dialog_type, text)
+    except Exception:
+        log("%s: %s" % (title, text))
+
+
+def _current_app():
+    try:
+        return NXOpen.Session.GetSession().ApplicationName or ""
+    except Exception:
+        return ""
+
+
+def _in_motion_app():
+    name = _current_app().upper()
+    return ("MECHANISM" in name) or ("MOTION" in name)
+
+
+def _cap_name(text, limit=NAME_MAX_LEN):
+    text = str(text or "")
+    if len(text) <= limit and len(text.encode("utf-8", "ignore")) <= NAME_MAX_BYTES:
+        return text
+    suffix = "_" + hashlib.md5(text.encode("utf-8", "ignore")).hexdigest()[:6]
+    byte_budget = NAME_MAX_BYTES - len(suffix)
+    char_budget = max(1, limit - len(suffix))
+    chars = []
+    used = 0
+    for char in text[:char_budget]:
+        size = len(char.encode("utf-8", "ignore"))
+        if used + size > byte_budget:
+            break
+        chars.append(char)
+        used += size
+    return ("".join(chars) or "R") + suffix
+
+
+def sanitize_record_name(name):
+    chars = []
+    for char in str(name or ""):
+        if char.isalnum() or char in _ALLOWED_PUNCT:
+            chars.append(char)
+        else:
+            chars.append("_")
+    return _cap_name("".join(chars).strip("_") or "REC")
+
+
+def ascii_encode_name(name):
+    chars = []
+    for char in str(name or ""):
+        if char.isascii() and (char.isalnum() or char in _ALLOWED_PUNCT):
+            chars.append(char)
+        else:
+            chars.append("_u%04X_" % ord(char))
+    return _cap_name("".join(chars) or "REC")
+
+
+def _is_charset_error(message):
+    text = str(message or "")
+    return (
+        ("记录名称" in text)
+        or ("characters" in text.lower())
+        or ("字母" in text)
+    )
+
+
+def _check_even_spacing(xs, tolerance=1e-8):
+    if len(xs) < 2:
+        return False
+    dx = float(xs[1]) - float(xs[0])
+    if dx <= 0:
+        return False
+    scale = max(1.0, abs(dx))
+    for index in range(2, len(xs)):
+        current = float(xs[index]) - float(xs[index - 1])
+        if abs(current - dx) > tolerance * scale:
+            return False
+    return True
+
+
+def _resample_even(xs, ys, target_dx=RESAMPLE_DX):
+    x0 = float(xs[0])
+    x1 = float(xs[-1])
+    span = x1 - x0
+    if span <= 0:
+        raise RuntimeError("时间序列范围必须大于 0")
+    count = max(2, int(round(span / float(target_dx))) + 1)
+    dx = span / float(count - 1)
+    out_x = [x0 + index * dx for index in range(count)]
+    out_y = []
+    for x_value in out_x:
+        pos = bisect.bisect_left(xs, x_value)
+        if pos <= 0:
+            out_y.append(float(ys[0]))
+        elif pos >= len(xs):
+            out_y.append(float(ys[-1]))
+        else:
+            xa = float(xs[pos - 1])
+            xb = float(xs[pos])
+            ya = float(ys[pos - 1])
+            yb = float(ys[pos])
+            fraction = 0.0 if xb == xa else (x_value - xa) / (xb - xa)
+            out_y.append(ya + fraction * (yb - ya))
+    return out_x, out_y
+
+
+def _pick_enum_member(cls, candidates=(), contains=None):
+    if cls is None:
+        return None
+    for member in candidates:
+        if hasattr(cls, member):
+            return getattr(cls, member)
+    if contains:
+        try:
+            for member in sorted(dir(cls)):
+                if member == "ValueOf" or member.startswith("_"):
+                    continue
+                if contains.lower() in member.lower():
+                    return getattr(cls, member)
+        except Exception:
+            pass
+    return None
+
+
+def _get_abscissa_type():
+    if "abscissa" in _enum_cache:
+        return _enum_cache["abscissa"]
+    afu_data = getattr(NXOpen.CAE, "AfuData", None)
+    nested = getattr(afu_data, "AbscissaType", None) if afu_data else None
+    value = _pick_enum_member(nested, ("Even",), "even")
+    if value is None:
+        for name in ("AfuDataAbscissaType", "AfuAbscissaType"):
+            value = _pick_enum_member(
+                getattr(NXOpen.CAE, name, None),
+                ("Even", "EvenSpacing", "Uniform"),
+                "even",
+            )
+            if value is not None:
+                break
+    if value is None:
+        raise RuntimeError("找不到 AFU 等距横轴类型")
+    _enum_cache["abscissa"] = value
+    return value
+
+
+def _get_macro_general():
+    if "macro_general" in _enum_cache:
+        return _enum_cache["macro_general"]
+    macro = _pick_enum_member(
+        getattr(NXOpen.CAE, "XyFunctionMacroType", None),
+        ("Motion", "General"),
+        "motion",
+    )
+    general = _pick_enum_member(
+        getattr(NXOpen.CAE, "XyFunctionGeneralType", None),
+        ("MotionGeneral", "General"),
+        "motiongeneral",
+    )
+    if macro is None or general is None:
+        raise RuntimeError("找不到 NX XY 函数类型枚举")
+    _enum_cache["macro_general"] = (macro, general)
+    return macro, general
+
+
+def _get_general(name):
+    return getattr(getattr(NXOpen.CAE, "XyFunctionGeneralType", None), name, None)
+
+
+def _get_xy_units(y_kind):
+    unit_cls = getattr(NXOpen.CAE, "XyFunctionUnit", None)
+    x_unit = _pick_enum_member(unit_cls, ("TimeSec", "TimeSecond"), "timesec")
+    if x_unit is None:
+        x_unit = _pick_enum_member(unit_cls, contains="time")
+    if y_kind == YTYPE_ANGL:
+        y_unit = _pick_enum_member(
+            unit_cls,
+            ("AngularDisplacementDegree",),
+            "angulardisplacementdegree",
+        )
+        if y_unit is None:
+            y_unit = _pick_enum_member(unit_cls, contains="degree")
+    else:
+        y_unit = _pick_enum_member(
+            unit_cls,
+            ("DisplacementMm", "DisplacementMM"),
+            "displacementmm",
+        )
+        if y_unit is None:
+            y_unit = _pick_enum_member(unit_cls, contains="displacement")
+    return x_unit, y_unit
+
+
+def _get_function_type_table():
+    if "function_table" in _enum_cache:
+        return _enum_cache["function_table"]
+    function_cls = getattr(NXOpen.CAE, "Function", None)
+    nested = getattr(function_cls, "Type", None) if function_cls else None
+    value = _pick_enum_member(nested, ("Table",), "table")
+    if value is None:
+        value = _pick_enum_member(
+            getattr(NXOpen.CAE, "FunctionType", None),
+            ("Table",),
+            "table",
+        )
+    _enum_cache["function_table"] = value
+    return value
+
+
+def _get_interp():
+    if "interpolation" in _enum_cache:
+        return _enum_cache["interpolation"]
+    function_cls = getattr(NXOpen.CAE, "Function", None)
+    nested = getattr(function_cls, "InterpolationMethod", None) if function_cls else None
+    value = _pick_enum_member(nested, ("Akima",), "akima")
+    if value is None:
+        interp_cls = getattr(NXOpen.CAE, "FunctionInterpolationMethod", None)
+        value = _pick_enum_member(interp_cls, ("Akima",), "akima")
+        if value is None:
+            value = _pick_enum_member(interp_cls, ("Linear",), "linear")
+    _enum_cache["interpolation"] = value
+    return value
+
+
+def _safe_get(obj, names):
+    for name in names:
+        try:
+            value = getattr(obj, name, None)
+            if value is not None:
+                return value
+        except Exception:
+            pass
+    return None
+
+
+def _find_record(manager, afu_path, record_name):
+    try:
+        indexes = list(manager.GetRecordIndexes(afu_path))
+    except Exception:
+        return None, ""
+    for index in indexes:
+        try:
+            timestamp, data = manager.GetAfuData(afu_path, int(index))
+            name = _safe_get(data, ("RecordName", "Name"))
+            try:
+                data.Dispose()
+            except Exception:
+                pass
+        except Exception:
+            continue
+        if name is not None and str(name) == record_name:
+            return int(index), str(timestamp or "")
+    return None, ""
+
+
+def _write_record_once(manager, afu_path, record_name, xs, ys, y_kind):
+    macro, general = _get_macro_general()
+    data = manager.CreateAfuData(_get_abscissa_type())
+    created = True
+    try:
+        try:
+            data.FileName = afu_path
+        except Exception:
+            pass
+        data.RecordName = record_name
+        x_unit, y_unit = _get_xy_units(y_kind)
+        if x_unit is not None:
+            try:
+                data.AbscissaUnit = x_unit
+            except Exception:
+                pass
+        if y_unit is not None:
+            try:
+                data.OrdinateUnit = y_unit
+            except Exception:
+                pass
+        try:
+            data.FunctionDataType = general
+        except Exception:
+            pass
+        try:
+            data.Interpolation = NXOpen.CAE.AfuData.InterpolationType.Linear
+            data.Extrapolation = NXOpen.CAE.AfuData.ExtrapolationType.Linear
+        except Exception:
+            pass
+        dx = float(xs[1]) - float(xs[0])
+        data.SetRealData(float(xs[0]), dx, [float(value) for value in ys])
+        try:
+            timestamp = manager.CreateRecord(macro, general, data)
+        except Exception as ex:
+            text = str(ex)
+            if ("已存在" not in text) and ("exist" not in text.lower()):
+                raise
+            created = False
+            index, _old_timestamp = _find_record(manager, afu_path, record_name)
+            if index is None:
+                raise RuntimeError("同名 AFU 记录存在但无法定位")
+            timestamp = manager.EditRecord(macro, general, index, data)
+    finally:
+        try:
+            data.Dispose()
+        except Exception:
+            pass
+
+    index, located_timestamp = _find_record(manager, afu_path, record_name)
+    if index is None:
+        raise RuntimeError("AFU 记录写入后无法定位")
+    return index, str(timestamp or located_timestamp), created
+
+
+def create_afu_record(manager, afu_path, raw_name, xs, ys, y_kind):
+    if not os.path.isfile(afu_path):
+        manager.CreateNewAfuFile(afu_path)
+        log("  已新建 AFU 文件: %s" % afu_path)
+    record_name = sanitize_record_name(raw_name)
+    if record_name != raw_name:
+        log("  名称规范化: %s -> %s" % (raw_name, record_name))
+    try:
+        index, timestamp, created = _write_record_once(
+            manager, afu_path, record_name, xs, ys, y_kind
+        )
+        return index, timestamp, record_name, created
+    except Exception as ex:
+        if not _is_charset_error(str(ex)):
+            raise
+        record_name = ascii_encode_name(raw_name)
+        log("  NX 拒绝原名称，使用兼容名称: %s" % record_name)
+        index, timestamp, created = _write_record_once(
+            manager, afu_path, record_name, xs, ys, y_kind
+        )
+        return index, timestamp, record_name, created
+
+
+def _find_function(work_part, record_name, aliases=()):
+    for name in [record_name] + list(aliases or ()):
+        try:
+            function = work_part.Functions.FindObject(name)
+            if function is not None:
+                return function
+        except Exception:
+            pass
+    try:
+        for function in work_part.Functions:
+            try:
+                if function.Name in ([record_name] + list(aliases or ())):
+                    return function
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
+def _rename_function(function, record_name):
+    try:
+        if (
+            len(record_name) <= NAME_MAX_LEN
+            and len(record_name.encode("utf-8", "ignore")) <= NAME_MAX_BYTES
+        ):
+            ufs = NXOpen.UF.UFSession.GetUFSession()
+            if ufs.Obj.AskName(int(function.Tag)) != record_name:
+                ufs.Obj.SetName(int(function.Tag), record_name)
+    except Exception:
+        pass
+
+
+def _set_builder_units(builder, x_unit, y_unit):
+    if x_unit is not None:
+        try:
+            builder.AbscissaUnit = x_unit
+        except Exception:
+            pass
+    if y_unit is not None:
+        try:
+            builder.OrdinateUnit = y_unit
+        except Exception:
+            pass
+    unknown = getattr(getattr(NXOpen.CAE, "XyFunctionUnit", None), "Unknown", None)
+    if unknown is not None:
+        for name in ("OrdinateSecondNumeratorUnit", "OrdinateDenominatorUnit"):
+            try:
+                setattr(builder, name, unknown)
+            except Exception:
+                pass
+
+
+def _setup_function_builder(
+    builder, afu_path, record_name, record_index, record_timestamp, y_kind
+):
+    macro, _general = _get_macro_general()
+    table_type = _get_function_type_table()
+    x_unit, y_unit = _get_xy_units(y_kind)
+    try:
+        builder.Name = afu_path
+    except Exception:
+        pass
+
+    errors = []
+    for general_name in ("MotionGeneral", "General", "Time"):
+        general = _get_general(general_name)
+        if general is None:
+            continue
+        try:
+            if table_type is not None:
+                builder.SetTypes(table_type, macro, general)
+            if SET_FUNCTION_UNITS:
+                _set_builder_units(builder, x_unit, y_unit)
+            builder.SetTableData(
+                int(record_index),
+                record_name,
+                str(record_timestamp),
+                _get_interp(),
+            )
+            return
+        except Exception as ex:
+            errors.append("%s: %s" % (general_name, str(ex)[:120]))
+    raise RuntimeError("表函数设置失败: " + " | ".join(errors))
+
+
+def _function_is_current_table(builder, record_name):
+    try:
+        types = builder.GetTypes()
+        head = types[0] if isinstance(types, (list, tuple)) else types
+        if "table" not in str(head).lower():
+            return False
+    except Exception:
+        return False
+    try:
+        table_data = builder.GetTableData()
+        return table_data is None or record_name in str(table_data)
+    except Exception:
+        return True
+
+
+def ensure_function(
+    work_part,
+    record_name,
+    afu_path,
+    record_index,
+    record_timestamp,
+    y_kind,
+    aliases=(),
+):
+    function = _find_function(work_part, record_name, aliases)
+    if function is not None:
+        builder = None
+        try:
+            builder = work_part.Functions.CreateFunctionBuilder(function)
+            healthy = _function_is_current_table(builder, record_name)
+            try:
+                builder.Destroy()
+            except Exception:
+                pass
+            builder = None
+            if healthy and SKIP_HEALTHY_REFRESH:
+                # The AFU record was already edited in place. Keeping the existing
+                # function object avoids NX access violations on referenced names.
+                return function, False
+            if healthy:
+                builder = work_part.Functions.CreateFunctionBuilder(function)
+                _setup_function_builder(
+                    builder,
+                    afu_path,
+                    record_name,
+                    record_index,
+                    record_timestamp,
+                    y_kind,
+                )
+                builder.Commit()
+                builder.Destroy()
+                _rename_function(function, record_name)
+                return function, False
+            NXOpen.UF.UFSession.GetUFSession().Obj.DeleteObject(int(function.Tag))
+            function = None
+        finally:
+            try:
+                if builder is not None:
+                    builder.Destroy()
+            except Exception:
+                pass
+
+    null_function = getattr(getattr(NXOpen.CAE, "Function", None), "Null", None)
+    builder = None
+    if null_function is not None:
+        try:
+            builder = work_part.Functions.CreateFunctionBuilder(null_function)
+        except Exception:
+            builder = None
+    if builder is None:
+        raise RuntimeError("当前 NX 版本无法创建表函数 Builder")
+
+    function = None
+    try:
+        if NEW_FN_TWO_STEP:
+            temporary_name = "AfT" + hashlib.md5(
+                record_name.encode("utf-8", "ignore")
+            ).hexdigest()[:9]
+            _setup_function_builder(
+                builder,
+                afu_path,
+                temporary_name,
+                record_index,
+                record_timestamp,
+                y_kind,
+            )
+            function = builder.Commit()
+            builder.Destroy()
+            builder = None
+            if function is None:
+                function = work_part.Functions.FindObject(temporary_name)
+            if function is None:
+                raise RuntimeError("新建函数后未返回 NX 对象")
+            _rename_function(function, record_name)
+            second_builder = None
+            try:
+                second_builder = work_part.Functions.CreateFunctionBuilder(function)
+                _setup_function_builder(
+                    second_builder,
+                    afu_path,
+                    record_name,
+                    record_index,
+                    record_timestamp,
+                    y_kind,
+                )
+                second_builder.Commit()
+            finally:
+                try:
+                    if second_builder is not None:
+                        second_builder.Destroy()
+                except Exception:
+                    pass
+            return function, True
+
+        _setup_function_builder(
+            builder,
+            afu_path,
+            record_name,
+            record_index,
+            record_timestamp,
+            y_kind,
+        )
+        function = builder.Commit()
+        builder.Destroy()
+        builder = None
+        _rename_function(function, record_name)
+        return function, True
+    except Exception:
+        try:
+            if builder is not None:
+                builder.Destroy()
+        except Exception:
+            pass
+        try:
+            if function is not None:
+                NXOpen.UF.UFSession.GetUFSession().Obj.DeleteObject(int(function.Tag))
+        except Exception:
+            pass
+        raise
+
+
+def _try_int(value):
+    try:
+        return int(value)
+    except Exception:
+        try:
+            return int(value.value)
+        except Exception:
+            return None
+
+
+def _joint_kind(joint):
+    try:
+        data = NXOpen.UF.UFSession.GetUFSession().Motion.AskJoint(int(joint.Tag))
+        for name in ("JtType", "JointType", "Type"):
+            if not hasattr(data, name):
+                continue
+            value = _try_int(getattr(data, name))
+            if value in _JTTYPE_MAP:
+                return _JTTYPE_MAP[value]
+    except Exception:
+        pass
+    for name in ("JointType", "Type", "JointTypeOption"):
+        try:
+            text = str(getattr(joint, name, "") or "")
+        except Exception:
+            text = ""
+        lowered = text.lower()
+        if "revolute" in lowered or "旋转" in text:
+            return "rot"
+        if (
+            "slider" in lowered
+            or "prismatic" in lowered
+            or "translat" in lowered
+            or "滑动" in text
+        ):
+            return "slide"
+    return ""
+
+
+def _find_joint(work_part, names):
+    wanted = set(str(name) for name in names if name)
+    for joint in work_part.MotionManager.Joints:
+        try:
+            if joint.Name in wanted:
+                return joint
+        except Exception:
+            pass
+    return None
+
+
+def _resolve_enum_member(cls_or_module, candidates=(), contains=None):
+    if cls_or_module is None:
+        return None
+    for name in candidates:
+        if hasattr(cls_or_module, name):
+            return getattr(cls_or_module, name)
+    if contains:
+        try:
+            for name in sorted(dir(cls_or_module)):
+                if not name.startswith("_") and contains.lower() in name.lower():
+                    return getattr(cls_or_module, name)
+        except Exception:
+            pass
+    return None
+
+
+def _driver_function_type(operation):
+    motion = NXOpen.Motion
+    enum_cls = getattr(motion, "DriverOperationType", None)
+    if enum_cls is None:
+        enum_cls = _resolve_enum_member(motion, contains="driveroperationtype")
+    if enum_cls is None:
+        driver_operation = getattr(motion, "DriverOperation", None)
+        if driver_operation is not None:
+            for name in dir(driver_operation):
+                if "type" not in name.lower():
+                    continue
+                try:
+                    candidate = getattr(driver_operation, name)
+                except Exception:
+                    continue
+                if hasattr(candidate, "Function"):
+                    enum_cls = candidate
+                    break
+    if enum_cls is None and operation is not None:
+        try:
+            enum_cls = type(operation.TypeOption)
+        except Exception:
+            pass
+    return (
+        _resolve_enum_member(enum_cls, ("Function",), "func"),
+        _resolve_enum_member(
+            enum_cls,
+            ("None", "InActive", "Inactive", "NoDriver", "Off"),
+        ),
+    )
+
+
+def _driver_integration_displacement(operation):
+    driver_operation = getattr(NXOpen.Motion, "DriverOperation", None)
+    enum_cls = (
+        getattr(driver_operation, "IntegrationType", None)
+        if driver_operation is not None
+        else None
+    )
+    if enum_cls is None and operation is not None:
+        try:
+            enum_cls = type(operation.IntegrationTypeOption)
+        except Exception:
+            pass
+    return _resolve_enum_member(enum_cls, ("Displacement",), "displacement")
+
+
+def bind_joint_to_function(work_part, joint, function, y_kind):
+    joints = work_part.MotionManager.Joints
+    joint_name = getattr(joint, "Name", "?")
+    if SKIP_REBIND:
+        try:
+            check_builder = joints.CreateJointBuilder(joint)
+            try:
+                for attribute in _DRIVER_ATTRS[y_kind]:
+                    operation = getattr(
+                        check_builder.JointMultiDrivers,
+                        attribute,
+                        None,
+                    )
+                    if operation is None or type(operation).__name__ != "DriverOperation":
+                        continue
+                    current = getattr(operation, "Function", None)
+                    if current is not None and int(current.Tag) == int(function.Tag):
+                        return True
+            finally:
+                check_builder.Destroy()
+        except Exception:
+            pass
+
+    try:
+        builder = joints.CreateJointBuilder(joint)
+    except TypeError:
+        builder = joints.CreateJointBuilder(target=joint)
+    driver_attribute = None
+    try:
+        drivers = builder.JointMultiDrivers
+        for attribute in _DRIVER_ATTRS[y_kind]:
+            operation = getattr(drivers, attribute, None)
+            if operation is not None and type(operation).__name__ == "DriverOperation":
+                driver_attribute = attribute
+                break
+        if driver_attribute is None:
+            raise RuntimeError("运动副没有匹配的位移驱动端口")
+        operation = getattr(drivers, driver_attribute)
+        function_type, none_type = _driver_function_type(operation)
+        if function_type is None:
+            raise RuntimeError("无法解析 NX 函数驱动类型")
+        if none_type is not None:
+            try:
+                if operation.TypeOption != function_type:
+                    operation.TypeOption = none_type
+            except Exception:
+                pass
+        errors = []
+        try:
+            operation.TypeOption = function_type
+        except Exception as ex:
+            errors.append("TypeOption: %s" % ex)
+        displacement_type = _driver_integration_displacement(operation)
+        if displacement_type is not None:
+            try:
+                operation.IntegrationTypeOption = displacement_type
+            except Exception as ex:
+                errors.append("IntegrationTypeOption: %s" % ex)
+        try:
+            operation.Function = function
+        except Exception as ex:
+            errors.append("Function: %s" % ex)
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        builder.Commit()
+    finally:
+        try:
+            builder.Destroy()
+        except Exception:
+            pass
+    log("  运动副[%s]绑定成功(%s)" % (joint_name, driver_attribute))
+    return True
+
+
+def resolve_afu_path(work_part):
+    try:
+        part_path = str(work_part.FullPath or "")
+    except Exception:
+        part_path = ""
+    part_dir = os.path.dirname(part_path)
+    if not part_dir:
+        raise RuntimeError("工作部件尚未保存，无法确定 AFU 文件路径")
+
+    candidates = [os.path.join(part_dir, "motion_1.afu")]
+    stem = os.path.splitext(os.path.basename(part_path))[0]
+    if stem:
+        candidates.append(os.path.join(part_dir, stem + ".afu"))
+    try:
+        for file_name in sorted(os.listdir(part_dir)):
+            if file_name.lower().endswith(".sim"):
+                candidates.append(
+                    os.path.join(
+                        part_dir,
+                        os.path.splitext(file_name)[0] + ".afu",
+                    )
+                )
+    except Exception:
+        pass
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return candidates[0]
+
+
+def _payload_y_kind(curve):
+    unit = str(curve.get("unit", "") or "").lower()
+    return YTYPE_ANGL if ("deg" in unit or "°" in unit) else YTYPE_DISP
+
+
+def _process_curve(manager, session, work_part, afu_path, curve):
+    raw_name = str(curve.get("name", "") or "").strip()
+    if not raw_name:
+        raise RuntimeError("坐标名称为空")
+    xs = [float(value) for value in list(curve.get("times", []) or [])]
+    ys = [float(value) for value in list(curve.get("values", []) or [])]
+    if len(xs) != len(ys) or len(xs) < 2:
+        raise RuntimeError("曲线数据长度无效")
+
+    normalized_name = sanitize_record_name(raw_name)
+    joint = _find_joint(work_part, (raw_name, normalized_name))
+    y_kind = _payload_y_kind(curve)
+    if joint is not None:
+        kind = _joint_kind(joint)
+        if kind == "rot":
+            y_kind = YTYPE_ANGL
+        elif kind == "slide":
+            y_kind = YTYPE_DISP
+
+    if not _check_even_spacing(xs):
+        xs, ys = _resample_even(xs, ys)
+        log("  时间非等距，已重采样为 %d 点" % len(xs))
+
+    record_index, timestamp, record_name, record_created = create_afu_record(
+        manager,
+        afu_path,
+        raw_name,
+        xs,
+        ys,
+        y_kind,
+    )
+    function, function_created = ensure_function(
+        work_part,
+        record_name,
+        afu_path,
+        record_index,
+        timestamp,
+        y_kind,
+        aliases=(raw_name,),
+    )
+    bound = False
+    if joint is not None:
+        bound = bind_joint_to_function(
+            work_part,
+            joint,
+            function,
+            y_kind,
+        )
+    else:
+        log("  未找到同名运动副，已创建/更新 AFU，跳过绑定")
+    log(
+        "  AFU[%s] %s；函数%s"
+        % (
+            record_name,
+            "新建" if record_created else "覆盖",
+            "新建" if function_created else "更新/复用",
+        )
+    )
+    return {
+        "record_created": bool(record_created),
+        "function_created": bool(function_created),
+        "bound": bool(bound),
+        "joint_missing": joint is None,
+    }
+
+
+def main():
+    log("==== MuJoCo XML Tool V20.4 / NX AFU 自动导入 ====")
+    if not _in_motion_app():
+        text = (
+            "当前不在运动仿真模块(当前: %s)。\n"
+            "请先进入[应用模块 -> 仿真 -> 运动]，再运行本脚本。"
+            % (_current_app() or "?")
+        )
+        _message("NX AFU 导入", NXOpen.NXMessageBox.DialogType.Warning, text)
+        return
+
+    try:
+        session = NXOpen.Session.GetSession()
+        work_part = session.Parts.Work
+        if work_part is None:
+            raise RuntimeError("当前没有打开的工作部件")
+        curves = list(_payload().get("curves", []) or [])
+        if not curves:
+            raise RuntimeError("脚本中没有曲线数据")
+        manager = session.AfuManager
+        afu_path = resolve_afu_path(work_part)
+
+        success_count = 0
+        failure_count = 0
+        bound_count = 0
+        missing_count = 0
+        for curve in curves:
+            name = str(curve.get("name", "") or "?")
+            log(">> %s" % name)
+            try:
+                result = _process_curve(
+                    manager,
+                    session,
+                    work_part,
+                    afu_path,
+                    curve,
+                )
+                success_count += 1
+                bound_count += 1 if result.get("bound") else 0
+                missing_count += 1 if result.get("joint_missing") else 0
+            except Exception as ex:
+                failure_count += 1
+                log("  失败: %s" % ex)
+                log(traceback.format_exc())
+
+        summary = (
+            "AFU 自动导入完成。\n\n"
+            "成功创建/更新：%d 个\n"
+            "已绑定同名运动副：%d 个\n"
+            "未找到同名运动副：%d 个\n"
+            "失败：%d 个\n\n"
+            "AFU 文件：%s"
+            % (
+                success_count,
+                bound_count,
+                missing_count,
+                failure_count,
+                afu_path,
+            )
+        )
+        dialog_type = (
+            NXOpen.NXMessageBox.DialogType.Information
+            if failure_count == 0
+            else NXOpen.NXMessageBox.DialogType.Warning
+        )
+        _message("NX AFU 导入成功" if failure_count == 0 else "NX AFU 导入完成", dialog_type, summary)
+    except Exception as ex:
+        log(traceback.format_exc())
+        _message(
+            "NX AFU 导入失败",
+            NXOpen.NXMessageBox.DialogType.Error,
+            "导入失败：%s\n\n详细信息已写入 NX Listing Window。" % ex,
+        )
+
+
+def GetUnloadOption(dummy):
+    return NXOpen.Session.LibraryUnloadOption.Immediately
+
+
+if __name__ == "__main__":
+    main()
+

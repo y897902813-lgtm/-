@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>MuJoCo Lab · V2.16.11.6</title>
+<link rel="stylesheet" href="/assets/lab.css?v=2.16.11.6">
+<script src="/assets/lab.js?v=2.16.11.6" defer></script>
+</head>
+<body>
+<!-- V2.15.6 spatial contract: fixed compact header / animation left / motor bars upper-right /
+     communication JSON lower-right; status consumes one short line, all long explanations on hover. -->
+<div class="lab-shell">
+  <header class="global-header">
+    <a class="brand" href="/hub" aria-label="返回 MuJoCoHub" title="返回 MuJoCoHub"><b>MuJoCo<span>Lab</span></b></a>
+    <span class="nav-divider" aria-hidden="true"></span>
+    <label class="project-switch"><span class="sr-only">当前项目</span><select id="projectSelect" title="切换项目"><option value="">加载项目中…</option></select></label>
+    <div class="header-spacer"></div>
+    <div class="toolbar-controls" role="group" aria-label="Lab 操作">
+      <button id="udpSettingsButton" class="udp-config-button" type="button" aria-haspopup="dialog" aria-controls="udpDialog" title="配置 UDP 目标地址、端口与 JSON 字段"><span>UDP</span><b id="udpTargetLabel">127.0.0.1:9090</b><span aria-hidden="true">⌄</span></button>
+      <button id="generateButton" class="secondary-button" type="button" title="按当前模型时序重新采样生成 HTML 动画">↻ <span>生成动画</span></button>
+      <button id="deployButton" class="primary-button" type="button" title="部署时序并向 UDP 目标发送，必须通过模型与动画身份校验" disabled>▷ <span>部署并发送</span></button>
+      <button id="stopButton" class="stop-button" type="button" title="停止当前 UDP 发送会话" disabled>■ <span>停止</span></button>
+    </div>
+    <div class="header-version" title="MuJoCo Studio Server V2.16.11.6">V2.16.11.6</div>
+  </header>
+  <div class="main-surface">
+    <div class="workspace-layout">
+      <main class="visual-pane" aria-label="MuJoCo 动画">
+        <div class="player-wrap" id="playerWrap">
+          <div class="empty-player" id="emptyPlayer"><strong>尚无可播放动画</strong><span>请选择项目并生成动画</span></div>
+          <iframe id="animationFrame" title="MuJoCo 仿真动画与电机实时位置" referrerpolicy="same-origin" loading="eager" hidden></iframe>
+        </div>
+        <div class="status-strip" id="statusStrip" title="悬停查看完整状态">
+          <span class="status-led" aria-hidden="true"></span><strong id="syncTitle">尚未同步</strong>
+          <span id="syncMessage" class="sr-only">请选择项目</span>
+          <span class="status-right" id="sampleClock">t = —</span>
+        </div>
+        <span id="animationStatus" class="sr-only" role="status">未就绪</span>
+      </main>
+      <div class="right-stack" id="rightStack" aria-label="时序及通信观测">
+        <aside class="timeline-pane" id="timelinePane" aria-label="电机时序甘特图">
+          <div id="timelineList" class="timeline-list" aria-live="polite"><div class="placeholder">读取电机时序…</div></div>
+          <div class="timeline-actions"><button id="timelineEditButton" class="icon-button timeline-edit-button" type="button" aria-pressed="false" title="编辑运动段（需正式签出项目）" aria-label="切换时序编辑模式">✎</button><a id="editSequenceLink" class="editor-link" href="/hub" target="_blank" rel="noopener" title="在 Studio Editor 打开完整时序（映射和外部 CSV 等高级运动段）" aria-label="打开完整时序编辑器">↗</a></div>
+          <span id="segmentCount" class="sr-only">0 段</span><span id="durationLabel" class="sr-only">总时长 —</span>
+        </aside>
+        <div class="pane-resizer" id="rightPanelResizer" role="separator" aria-label="拖动调节时序与通信区域的高度，双击恢复默认" aria-orientation="horizontal" aria-valuemin="15" aria-valuemax="85" aria-valuenow="40" tabindex="0" title="上下拖动调整时序与通信观测高度；双击恢复默认"><span aria-hidden="true"></span></div>
+        <aside class="telemetry-pane" id="telemetryPane" aria-label="UDP JSON 通信观测">
+          <div class="telemetry-heading">
+            <strong title="UDP JSON 通信观测；悬停切换标签查看完整时序或实时状态">UDP JSON</strong>
+            <div class="telemetry-tabs" id="udpViewTabs" role="tablist" aria-label="UDP JSON 报文类型">
+              <button id="udpTimelineTab" type="button" class="telemetry-tab" role="tab" aria-controls="telemetryTimelineJson" aria-selected="true" tabindex="0" title="完整时序 TIMELINE：部署前为计划预览，部署成功后保留实际发送报文">TIMELINE</button>
+              <button id="udpStateTab" type="button" class="telemetry-tab" role="tab" aria-controls="telemetryStateJson" aria-selected="false" tabindex="-1" title="实时状态 STATE：仅保留服务端确认发送的最新 JSON，限流帧不覆盖">STATE</button>
+            </div>
+            <span id="runStatus" title="Lab 发送状态">STANDBY</span>
+          </div>
+          <div class="telemetry-output" id="telemetryJson">
+            <pre id="telemetryTimelineJson" class="telemetry-packet" role="tabpanel" aria-labelledby="udpTimelineTab" tabindex="0">读取项目时序…</pre>
+            <pre id="telemetryStateJson" class="telemetry-packet" role="tabpanel" aria-labelledby="udpStateTab" tabindex="0" hidden>等待已发送的实时状态…</pre>
+          </div>
+          <div class="sr-only" aria-hidden="true"><code id="sequenceText">—</code><code id="runText">—</code><strong id="packetText">等待部署</strong><div id="motorList"></div><div id="distanceList"></div></div>
+        </aside>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+</div>
+<dialog id="segmentEditDialog" class="segment-dialog" aria-labelledby="segmentEditTitle">
+  <form id="segmentEditForm" method="dialog" autocomplete="off">
+    <header class="dialog-header"><div><h2 id="segmentEditTitle">修改运动段</h2><p id="segmentEditDetail"></p></div><button id="segmentEditClose" class="icon-button" type="button" aria-label="关闭">✕</button></header>
+    <div class="dialog-scroll"><div class="settings-grid">
+      <label>起始时间 (s)<input id="segmentEditStart" type="number" required min="0" step="any"></label>
+      <label>运动时长 (s)<input id="segmentEditDuration" type="number" required min="0.000001" step="any"></label>
+      <label>速度<input id="segmentEditSpeed" type="number" required step="any"></label>
+      <label>行程<input id="segmentEditTravel" type="number" required step="any"></label>
+    </div><p id="segmentEditMode" class="dialog-hint"></p></div>
+    <footer class="dialog-footer"><span id="segmentEditError" role="alert"></span><button id="segmentEditCancel" type="button" class="secondary-button">取消</button><button id="segmentEditSave" type="submit" class="primary-button">保存至项目时序</button></footer>
+  </form>
+</dialog>
+<dialog id="udpDialog" class="udp-dialog" aria-labelledby="udpDialogTitle">
+  <form id="udpForm" method="dialog" autocomplete="off">
+    <header class="dialog-header"><div><div class="section-eyebrow">NETWORK / PROTOCOL</div><h2 id="udpDialogTitle">UDP 通信与 JSON 配置</h2><p>配置保存在当前模型中，UDP 从 Studio Server 发出；Simulink 应使用 UDP Receive。</p></div><button id="udpClose" class="icon-button" type="button" aria-label="关闭">✕</button></header>
+    <div class="dialog-scroll">
+      <section class="dialog-section"><h3>01 · 网络设置</h3><div class="settings-grid">
+        <label>目标 IPv4 地址<input id="cfgRemoteIp" required value="127.0.0.1" spellcheck="false"></label>
+        <label>目标端口<input id="cfgRemotePort" type="number" min="1" max="65535" required value="9090"></label>
+        <label>本地绑定地址<input id="cfgLocalIp" value="0.0.0.0" spellcheck="false"></label>
+        <label>UDP 包大小（字节）<input id="cfgPacketSize" type="number" min="256" max="65507" value="512"></label>
+        <label>超长 JSON<select id="cfgPacketMode"><option value="fragment">ML1 分片（接收端需重组）</option><option value="strict">超过包长直接拒绝</option></select></label>
+        <label>实时发送间隔（ms）<input id="cfgInterval" type="number" min="20" max="1000" step="10" value="50"></label>
+      </div><p class="field-warning">注意：Simulink 原始 UDP Receive 不会自动还原 ML1 分片。若使用 512 字节并需要完整 JSON，请使用接收侧重组函数；否则可选“超过包长直接拒绝”以避免不完整数据。</p></section>
+      <section class="dialog-section"><h3>02 · JSON 字段选择</h3><div class="field-chooser"><div><h4>实时状态 state</h4><div id="stateFieldChecks" class="check-grid"></div></div><div><h4>完整时序 timeline</h4><div id="timelineFieldChecks" class="check-grid"></div></div></div><p class="field-footnote">协议版本、对象 ID、时序 ID、运行 ID、消息类型和状态的仿真时间为强制字段，不能取消。电机、测距、运动标志等可自由选择。</p></section>
+      <section class="dialog-section"><h3>03 · 自定义 JSON 扩展</h3><div class="extra-grid"><label>state 自定义字段（JSON 对象）<textarea id="cfgStateExtra" rows="4" spellcheck="false">{}</textarea></label><label>timeline 自定义字段（JSON 对象）<textarea id="cfgTimelineExtra" rows="4" spellcheck="false">{}</textarea></label></div></section>
+      <section class="dialog-section preview-section"><div class="preview-heading"><h3>04 · JSON 实时预览</h3><small>来自当前缓存帧；未生成动画时为示意结构，不参与发送</small></div><div class="preview-grid"><div><div class="preview-label">STATE <button id="copyState" type="button" class="text-button">复制 JSON ↗</button></div><pre id="stateJsonPreview"></pre></div><div><div class="preview-label">TIMELINE <button id="copyTimeline" type="button" class="text-button">复制 JSON ↗</button></div><pre id="timelineJsonPreview"></pre></div></div></section>
+    </div>
+    <footer class="dialog-footer"><span id="dialogError" role="alert"></span><button id="udpCancel" type="button" class="secondary-button">取消</button><button id="udpSave" type="submit" class="primary-button">保存 UDP 配置</button></footer>
+  </form>
+</dialog>
+</body>
+</html>

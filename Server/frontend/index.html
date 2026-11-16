@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>MuJoCo Studio</title>
+  <script>
+    try {
+      const hubEntryState = sessionStorage.getItem('mujocoStudioHubEntry');
+      if (hubEntryState === 'pending' || hubEntryState === 'zoomed') {
+        document.documentElement.classList.add('hub-entry-pending');
+        if (hubEntryState === 'zoomed') document.documentElement.classList.add('hub-entry-zoomed');
+      }
+    } catch (_) {}
+  </script>
+  <link rel="preload" href="/assets/login_mujoco_timeline.glb?v=2.16.11.6" as="fetch">
+  <link rel="stylesheet" href="/assets/styles.css?v=2.16.11.6">
+</head>
+<body>
+  <section id="hubEntryTransition" class="hub-entry-transition" aria-hidden="true" aria-label="正在进入 MuJoCo Hub">
+    <div class="hub-entry-wash" role="status" aria-live="polite"><i></i><span>MUJOCO HUB</span></div>
+  </section>
+  <section id="loginScreen" class="login-screen hidden" aria-label="登录 MuJoCo Studio">
+    <div id="loginMetalStage" class="login-metal-stage" aria-hidden="true">
+      <canvas id="loginGlbCanvas" class="login-glb-canvas"></canvas>
+      <div id="loginGlbStatus" class="login-glb-status"><i></i><span>LOADING DYNAMICS CORE</span></div>
+      <div class="login-glb-caption"><strong>时序优化核心</strong><small>MUJOCO · DYNAMICS / TRAJECTORY / CONVERGENCE</small></div>
+    </div>
+    <form id="loginForm" class="login-card">
+      <div class="brand-mark">M</div><h1>MuJoCo Studio</h1>
+      <p>使用服务器账号进入工程工作区</p>
+      <label>用户名<input id="loginUsername" autocomplete="username" required></label>
+      <label>密码<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <button class="button primary" type="submit">登录</button>
+      <small id="loginError" role="alert"></small>
+    </form>
+  </section>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/hub" aria-label="MuJoCo Studio home">
+        <span class="brand-mark">M</span>
+        <span><strong id="brandTitle">MuJoCoHub</strong><small id="brandSubtitle">MODEL HUB</small></span>
+      </a>
+      <div id="hubTopControls" class="hub-top-controls" aria-label="Hub 快捷设置">
+        <button id="vzEngineerButton" class="button ghost hub-vz-engineer-button hub-only-top-control" type="button" title="打开集成的 VZ 工程师界面">工程师界面 ↗</button>
+        <div class="account-controls hub-only-top-control" aria-label="账号管理">
+          <span id="authIdentity" class="badge hidden"></span>
+          <button id="accountButton" class="button ghost hidden">账号管理</button>
+          <button id="logoutButton" class="button ghost hidden">退出</button>
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <span id="apiDot" class="status-dot"></span>
+        <span id="apiStatus">正在连接 API</span>
+        <a href="/docs" target="_blank">API 文档 ↗</a>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div id="editorContext" class="editor-context hidden"><strong id="editorProjectLabel"></strong></div>
+        <nav id="navigation">
+          <a href="#overview" data-page="overview"><span>◫</span>总览</a>
+          <a href="#model" data-page="model"><span>◇</span>层级建模</a>
+          <a href="#drives" data-page="drives"><span>↝</span>驱动设置</a>
+          <a href="#distance" data-page="distance"><span>↔</span>测距配置</a>
+          <a href="#simulation" data-page="simulation"><span>▶</span>仿真结果查看</a>
+        </nav>
+        <div class="page-heading-hidden"><p id="pageEyebrow">WORKSPACE</p><h1 id="pageTitle">工程总览</h1></div>
+        <div class="top-actions">
+          <button id="editorCheckinButton" class="button primary hidden" type="button" title="签入并关闭当前模型分页">签入</button>
+          <span id="dirtyBadge" class="badge hidden" aria-live="polite" title="修改会先保留在此设备，Enter 后更新服务端当前版本">正在保存…</span>
+          <button id="undoButton" class="button ghost" title="优先撤销浏览器草稿修改，必要时回退服务端事件 (Ctrl+Z)">↶ 撤销</button>
+          <button id="redoButton" class="button ghost" title="前进 (Ctrl+Y)">↷ 前进</button>
+          <button id="globalViewerButton" class="button accent" title="管理员直启服务端本机 MuJoCo；工程师通过本地客户端启动">◉ MuJoCo View</button>
+          <!-- V2.16.6: keep the integration hook, hide manual transport detail from users. -->
+          <button id="syncDraftButton" class="button ghost hidden" type="button" hidden aria-hidden="true" tabindex="-1" disabled>同步草稿</button>
+          <button id="saveButton" class="button ghost" title="将当前模型保存到版本历史；可新建或覆盖普通历史版本，不影响当前最新版本">保存历史版本</button>
+        </div>
+      </header>
+
+      <section id="toastRegion" class="toast-region" aria-live="polite"></section>
+      <section id="leaseLostBanner" class="state-alert lease-alert hidden" role="alert">
+        <span id="leaseLostMessage">编辑租约已失效，模型仍归你签出。</span>
+        <button id="leaseReacquireButton" class="button tiny primary" type="button">恢复编辑</button>
+      </section>
+      <section id="lifecycleFailureBanner" class="state-alert lifecycle-alert hidden" role="alert">
+        <span id="lifecycleFailureMessage"></span>
+      </section>
+
+      <!-- V2.16.11.1: explicit mesh ownership choice; defaults to no asset copy. -->
+      <dialog id="hubForkMeshDialog" class="hub-fork-mesh-dialog" aria-labelledby="hubForkMeshTitle">
+        <form id="hubForkMeshForm" method="dialog">
+          <header><strong id="hubForkMeshTitle">使用基线 · 选择数模资产</strong><small>创建可编辑版本前，请确认新模型使用哪一份数模。</small></header>
+          <div class="hub-fork-choices" role="radiogroup" aria-label="数模资产处理方式">
+            <label class="hub-fork-choice"><input type="radio" name="hubForkMeshStrategy" value="bind_existing" checked><span><b>绑定现有数模资产 <em>推荐 · 不复制</em></b><small>从当前模型类型的数模资产库中选择已有文件夹；不增加数模副本。</small></span></label>
+            <div id="hubForkBindFields" class="hub-fork-choice-fields"><label for="hubForkMeshFolder">选择资产文件夹</label><select id="hubForkMeshFolder"><option value="">请先选择现有数模资产</option></select></div>
+            <label class="hub-fork-choice"><input type="radio" name="hubForkMeshStrategy" value="copy_frozen"><span><b>复制冻结数模到资产库</b><small>为这次工作版本新建独立数模文件夹。适用于原资产已不存在或需要独立修改数模的情况。</small></span></label>
+            <div id="hubForkCopyFields" class="hub-fork-choice-fields" hidden><label for="hubForkCopyFolderName">新资产文件夹名称</label><input id="hubForkCopyFolderName" maxlength="120" placeholder="请输入新文件夹名称"></div>
+          </div>
+          <p id="hubForkMeshHint" class="hub-fork-mesh-hint" aria-live="polite">现有数模文件将按模型引用文件名校验，缺失文件时不会创建工作版本。</p>
+          <footer><button id="hubForkMeshCancel" class="button ghost" type="button">取消</button><button id="hubForkMeshConfirm" class="button primary" type="submit">创建工作版本</button></footer>
+        </form>
+      </dialog>
+
+      <div id="blockingLoadingOverlay" class="blocking-loading-overlay hidden" role="status" aria-live="assertive" aria-hidden="true" tabindex="-1">
+        <div class="blocking-loading-card">
+          <div class="blocking-loading-indicator" aria-hidden="true"><span></span><span></span><span></span></div>
+          <strong id="blockingLoadingTitle">正在处理</strong>
+          <p id="blockingLoadingDetail">请等待当前操作完成。</p>
+          <small id="blockingLoadingElapsed" class="blocking-loading-elapsed" aria-live="off">已等待 0 秒 · 操作正在进行</small>
+          <div class="blocking-loading-track" aria-hidden="true"><span id="blockingLoadingBar"></span></div><button id="cancelViewerLaunchButton" class="button tiny ghost blocking-cancel hidden" type="button">终止撒点 / Viewer 启动</button>
+          <small>当前操作完成前，请勿关闭或刷新页面</small>
+        </div>
+      </div>
+
+      <section class="page" data-page-content="overview">
+        <div class="hub-toolbar">
+          <div><strong>模型中心</strong><span>V2.16.11.6 · Hub / 独立模型 Editor</span><span id="hubProjectRoot" title="当前项目根；管理员可管理项目名称">项目</span></div>
+          <div class="hub-actions">
+            <button class="hub-action" id="hubNewProjectButton" title="新建模型"><b>＋</b><span>新建模型</span></button>
+            <div class="hub-transfer-stack" aria-label="模型与完整压缩包导入导出">
+              <div class="hub-transfer-row">
+                <button class="hub-action" id="hubImportProjectButton" title="从模型 JSON 导入；默认导入当前文件夹"><b>⇩</b><span>导入模型</span></button>
+                <button class="hub-action" id="hubExportProjectButton" title="导出所选完整模型 JSON；映射表数据会内嵌"><b>⇧</b><span>导出模型</span></button>
+              </div>
+              <div class="hub-transfer-row">
+                <button class="hub-action" id="hubImportBundleButton" title="导入完整压缩包到当前文件夹"><b>⇩</b><span>导入压缩包</span></button>
+                <button class="hub-action" id="hubExportBundleButton" title="导出模型、数模资产、交付数据和存档日志"><b>⇧</b><span>导出压缩包</span></button>
+              </div>
+            </div>
+            <button class="hub-action" id="hubLabButton" title="在 MuJoCo Lab 中打开所选模型"><b>◎</b><span>MuJoCo Lab ↗</span></button>
+            <button class="hub-action" id="quickRunButton" title="运行智能工作流"><b>✦</b><span>智能工作流</span></button>
+            <input id="projectJsonInput" class="hidden" type="file" accept=".json,application/json">
+            <input id="projectBundleInput" class="hidden" type="file" accept=".zip,application/zip,application/x-zip-compressed">
+          </div>
+        </div>
+        <div class="hub-metrics" aria-label="当前项目统计">
+          <span>层级 <b id="metricLayers">0</b></span>
+          <span>运动副 <b id="metricJoints">0</b></span>
+          <span>驱动段 <b id="metricSegments">0</b></span>
+          <span>测距对 <b id="metricPairs">0</b></span>
+        </div>
+        <div class="hub-workspace">
+          <aside class="panel hub-categories">
+            <div class="compact-heading"><strong>项目列表</strong><span class="heading-actions"><button id="hubToggleAllCategoriesButton" class="button tiny ghost hub-collapse-all-button" data-action="hub-toggle-all-categories" title="折叠全部文件夹" aria-label="折叠全部文件夹"><span class="hub-collapse-all-icon" aria-hidden="true"></span></button><button id="hubAddCategoryButton" class="button tiny ghost" title="在当前文件夹下新建子类型">＋</button><button id="hubDeleteCategoryButton" class="button tiny danger" title="删除当前模型类型">−</button><span id="hubProjectCount" class="badge">0</span></span></div>
+            <div id="hubCategoryTree" class="hub-category-tree"></div>
+            <div id="hubRecycleBinSlot" class="hub-recycle-bin-slot"></div>
+          </aside>
+          <div id="hubProjectWidthSplitter" class="hub-project-width-splitter" role="separator" aria-orientation="vertical" aria-label="调整项目列表宽度" tabindex="0"><span></span></div>
+          <section class="panel hub-projects">
+            <div class="hub-project-filter"><input id="hubProjectSearch" placeholder="搜索全部层级：名称、标签、资产或文件夹"><button id="hubBaselineSortToggle" class="button tiny ghost hub-baseline-sort-toggle" type="button" title="切换基线模型的冻结时间排序方向" aria-pressed="false">基线：早 → 晚</button></div>
+            <div id="hubProjectList" class="hub-project-list empty-state">正在读取项目</div>
+          </section>
+          <aside class="panel hub-preview">
+            <div class="hub-preview-head">
+              <div><strong id="hubPreviewTitle">模型属性</strong><small id="hubPreviewSubtitle">模型文件、关键数据、存档与交付数据</small></div>
+              <div class="hub-preview-actions"><button id="hubReloadGanttPreview" class="button tiny ghost" title="刷新甘特图缓存预览">↻</button></div>
+            </div>
+            <div id="hub-preview-slot" class="hub-preview-slot">
+              <div id="hubPreview" class="empty-state">选择模型查看属性</div>
+              <div id="hubPreviewLoading" class="hub-preview-loading hidden" role="status" aria-live="polite"><span class="hub-preview-spinner" aria-hidden="true"></span><strong>正在加载模型属性…</strong></div>
+              <section id="hubGanttQuick" class="hub-gantt-quick empty-state" aria-label="甘特图缓存预览" hidden><h3>最新甘特图缓存</h3>
+                <div id="hubGanttQuickThumb"><a id="hubGanttQuickThumbWrap"><img id="hubGanttQuickImg" alt="甘特图缓存预览"></a></div>
+                <footer><small id="hubGanttQuickMeta">尚未生成缓存</small></footer>
+              </section>
+            </div>
+          </aside>
+          <aside class="panel hub-inspector" aria-label="属性检视器">
+            <div class="hub-inspector-head">
+              <div><strong id="hubInspectorTitle">属性检视器</strong><small id="hubInspectorSubtitle">选择模型属性查看配置项</small></div>
+              <div id="hubInspectorHeadActions" class="hub-inspector-head-actions" aria-label="属性检视器快捷控制"></div>
+            </div>
+            <div id="hubInspector" class="hub-inspector-body empty-state">先选择一个模型，再选择“数模资产 / 交付数据 / 存档日志”。</div>
+          </aside>
+        </div>
+        <section id="hubComparison" class="panel hub-comparison hidden"></section>
+      </section>
+
+      <section class="page hidden" data-page-content="model">
+        <div class="model-toolbar panel">
+          <div class="mesh-source">
+            <strong>模型文件</strong>
+            <input id="localMeshPath" readonly placeholder="服务端项目资产目录（由上传通道管理）">
+            <button id="scanMeshPathButton" class="button tiny ghost" title="重新扫描当前模型已上传到服务端的资产目录，并强制重建缩略图">扫描路径</button>
+            <button id="repairMeshesButton" class="button tiny ghost" title="删除项目中已不存在于当前服务端数模库的 STL/OBJ 引用，并按服务端真实文件名校正大小写；切换/删除数模后用于避免 XML 继续引用缺失文件。">修复失效引用</button>
+            <small class="mesh-repair-help">仅清理失效引用/校正文件名，不上传或切换数模资产文件夹。</small>
+            <select id="serverSceneSelect" class="scene-select" title="选择服务端托管的自包含 MuJoCo XML 场景"><option value="">内置默认场景</option></select>
+            <button id="uploadSceneButton" class="button tiny ghost">上传 XML 场景</button>
+            <button id="openViewerModelButton" class="button tiny accent" title="管理员直启服务端本机 MuJoCo；工程师通过本地客户端启动">◉ MuJoCo View</button>
+            <input id="sceneXmlInput" class="hidden" type="file" accept=".xml,application/xml,text/xml">
+          </div>
+          <span id="meshRootLabel" class="mesh-root-label">尚未选择模型目录</span>
+        </div>
+        <div class="hierarchy-mode-strip panel">
+          <div class="hierarchy-mode-left">
+            <button id="hierarchyViewToggle" type="button" class="button tiny ghost" data-action="toggle-hierarchy-view" title="在层级树与框图画布之间切换">层级建模 ↔ 框图建模</button>
+            <label class="solver-mode-switch" title="项目级求解模式：不允许层级内运动学/动力学混合"><span>运动学</span><input id="solverModeToggle" type="checkbox" aria-label="切换纯运动学/纯动力学"><i></i><span>动力学</span></label>
+          </div>
+          <div class="hierarchy-mode-right"><span id="hierarchyViewLabel" class="badge">层级建模</span></div>
+        </div>
+        <div class="model-studio">
+          <aside class="panel layer-tree-panel">
+            <div class="compact-heading layer-heading-clean"><strong>层级树</strong></div>
+            <div id="layerTreeTabs" class="layer-tree-tabs" role="tablist" aria-label="子模型层级树"></div>
+            <button class="tree-root" data-action="select-root">▾ root</button>
+            <div id="layerTree" class="layer-tree"></div>
+          </aside>
+          <section id="hierarchyDiagramPanel" class="panel hierarchy-diagram-panel hidden">
+            <div class="hierarchy-diagram-toolbar">
+              <div><strong>框图画布</strong><small>拖缩略图移动；右/下/右下边缘可独立缩放宽高；左键拖动画布空白区域框选，多选后可整体移动；中键平移；Ctrl+滚轮缩放。</small></div>
+              <div class="row-actions"><span id="hierarchyDiagramZoom" class="hierarchy-diagram-zoom" title="Ctrl+滚轮以鼠标位置为中心缩放">100%</span><button class="button tiny ghost" data-action="diagram-auto-arrange" title="按框图实际尺寸和父子子树占用空间自动排布，避免复杂层级节点重叠">自动排布</button><button class="button tiny ghost active" data-action="diagram-link-kind" data-kind="parent">父子连线</button><button class="button tiny ghost" data-action="diagram-link-kind" data-kind="closure">闭链连线</button></div>
+            </div>
+            <div id="hierarchyDiagramViewport" class="hierarchy-diagram-viewport" data-hierarchy-diagram-viewport tabindex="0" aria-label="层级框图画布">
+              <div id="hierarchyDiagramWorld" class="hierarchy-diagram-world">
+                <svg id="hierarchyDiagramEdges" class="hierarchy-diagram-edges" aria-hidden="true"></svg>
+                <div id="hierarchyDiagramEdgeLabels" class="hierarchy-diagram-edge-labels"></div>
+                <div id="hierarchyDiagramSelectionBox" class="hierarchy-diagram-selection-box" aria-hidden="true"></div>
+                <div id="hierarchyDiagramNodes" class="hierarchy-diagram-nodes"></div>
+              </div>
+            </div>
+          </section>
+          <div class="diagram-layout-splitter horizontal" data-diagram-layout-splitter="property" role="separator" aria-orientation="horizontal" title="拖动调整画布与属性视窗高度"><span></span></div>
+          <section class="panel layer-property-panel">
+            <div id="layerDetails" class="empty-state">在左侧选择层级查看属性</div>
+          </section>
+          <div class="diagram-layout-splitter vertical" data-diagram-layout-splitter="library" role="separator" aria-orientation="vertical" title="拖动调整数模库宽度"><span></span></div>
+          <aside class="panel mesh-library-panel">
+            <div class="compact-heading"><strong>数模库</strong><span id="meshFileCount" class="badge">0 FILES</span></div>
+            <input id="meshSearch" class="compact-search" placeholder="搜索 STL/OBJ">
+            <div id="meshFileList" class="mesh-file-list empty-state">尚未扫描模型</div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page hidden" data-page-content="drives">
+        <div class="section-intro drive-section-intro"><div><h2>驱动与时间曲线</h2><p>公式、引用时间、缓起缓停和多段运动由后端统一解释。</p></div><div class="row-actions"><details id="variablesPanel" class="variables-panel variables-panel-inline"><summary><span><b>自定义变量</b></span><button id="addVariableButton" type="button" class="button tiny ghost">＋ 变量</button></summary><div id="variableList" class="inline-fields"></div></details><label class="switch-label quick-opt-switch"><input id="quickOptimizationToggle" type="checkbox"><span></span>快速寻优</label><label class="inline-check drive-column-toggle"><input id="driveTwoColumn" type="checkbox">双列</label><button id="importTimeSeriesButton" class="button accent" title="查看当前模型的 TSJSON 时序，切换驱动配置或保存当前配置">时序选择</button><button id="adaptiveAddDriveButton" class="button ghost" title="为所有尚未绑定驱动的运动副自动创建驱动">自适应添加</button><button id="addDriveButton" class="button primary">＋ 添加驱动</button></div></div>
+        <div id="driveOptimizationLayout" class="drive-optimization-layout">
+          <div class="drive-editor-column">
+            <div id="driveListShell" class="drive-list-shell">
+              <div id="driveList" class="stack-list"></div>
+              <div id="driveColumnSplitter" class="drive-column-splitter" role="separator" tabindex="0"
+                   aria-orientation="vertical" aria-label="拖动调整驱动双列宽度" aria-controls="driveList"
+                   aria-valuemin="30" aria-valuemax="70" aria-valuenow="50" aria-valuetext="左侧 50%，右侧 50%"
+                   title="拖动调整左右驱动栏宽度；方向键微调，双击恢复均分"><span aria-hidden="true"></span></div>
+            </div>
+          </div>
+          <aside id="quickOptimizationPanel" class="panel quick-optimization-panel hidden" aria-label="快速寻优工作流">
+            <header>
+              <div><strong>快速寻优工作流</strong><small>双击左侧“开始 / 偏移、时长 / 速度、行程”文字添加对象</small></div>
+              <button class="button tiny primary" data-action="quick-run-all">开始</button>
+            </header>
+            <div class="quick-workflow-toolbar">
+              <input id="quickWorkflowName" value="快速寻优工作流" aria-label="工作流名称">
+              <button class="button tiny ghost" data-action="quick-save">保存</button>
+              <button class="button tiny ghost" data-action="quick-export">导出</button>
+              <button class="button tiny ghost" data-action="quick-import">导入</button>
+              <input id="quickWorkflowInput" class="hidden" type="file" accept=".json,application/json">
+            </div>
+            <div id="quickOptimizationSteps" class="quick-optimization-steps"></div>
+            <footer>
+              <button class="button tiny accent" data-action="quick-preview">预览</button>
+              <button class="button tiny primary" data-action="quick-load-all">一键载入</button>
+            </footer>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page hidden" data-page-content="distance">
+        <div class="section-intro"><div><h2>多对象测距</h2></div><div class="row-actions distance-header-actions"><details class="distance-sampling-settings"><summary>撒点上限</summary><span>曲率从大到小渐进优先，其余位置采用高速面积撒点；支持 10000+ 点。</span><label>每对象<input id="distanceSampleLimit" type="number" min="16" max="20000" step="1" data-type="number" data-bind="distance_sampling.max_points_per_object" value="400"></label></details><button id="addPairButton" class="button primary">＋ 添加测距对</button></div></div>
+        <div id="pairList" class="card-grid"></div>
+      </section>
+
+      <section class="page hidden" data-page-content="simulation">
+        <div class="simulation-result-workspace">
+          <aside class="panel simulation-compact-panel">
+            <div class="compact-heading"><strong>仿真设置</strong><span class="pill neutral">SIM</span></div>
+            <div class="simulation-fields">
+              <label>开始 s<input id="simStart" type="number" step="0.01"></label>
+              <label>结束 s<input id="simEnd" type="number" step="0.01"></label>
+              <select id="simEngine" class="hidden" aria-hidden="true"><option value="mujoco" selected>MuJoCo trajectory</option></select>
+              <details id="simulationAdvanced" class="simulation-advanced-settings">
+                <summary><b>更多仿真参数</b></summary>
+                <div class="simulation-advanced-grid">
+                  <label>步长 s<input id="simStep" type="number" step="0.001"></label>
+                  <label class="inline-check dynamic-only-setting"><input id="simGroundEnabled" type="checkbox">默认世界地面</label>
+                  <label class="dynamic-only-setting">重力 m/s²<input id="simGravity" type="number" min="0" step="0.01"></label>
+                  <label class="dynamic-only-setting">默认地面摩擦<input id="simGroundFriction" type="number" min="0" step="0.05"></label>
+                  <label class="dynamic-only-setting">默认地面膨胀 mm<input id="simGroundMargin" type="number" min="0" step="0.5"></label>
+                  <label class="dynamic-only-setting">接触响应 s<input id="simContactResponse" type="number" min="0.0001" step="0.001"></label>
+                  <label class="dynamic-only-setting">接触阻尼比<input id="simContactDamping" type="number" min="0.01" step="0.1"></label>
+                </div>
+              </details>
+              <details class="camera-pose-field camera-config-box">
+                <summary><b>方向机位置与朝向</b></summary>
+                <small>坐标单位为 m；朝向为相机看向模型的方向向量。</small>
+                <div class="camera-config-grid">
+                  <b>视图</b><b>坐标 X Y Z</b><b>朝向 X Y Z</b>
+                  <span>正视图</span><input id="cameraFrontPos" value="0.8 -1 0.6"><input id="cameraFrontDirection" value="0 1 0">
+                  <span>侧视图</span><input id="cameraSidePos" value="1.5 -0.405 0.8"><input id="cameraSideDirection" value="-1 0 0">
+                  <span>POV</span><input id="cameraPovPos" value="1.4 -0.405 0.97"><input id="cameraPovDirection" value="-0.898 0 -0.439">
+                  <span>初始自由</span><input id="cameraFreePos" value="0.8 -1.5 0.6"><input id="cameraFreeDirection" value="0 1 0">
+                </div>
+              </details>
+            </div>
+            <div class="simulation-actions simulation-actions-compact">
+              <!-- V2.16.6: Enter from an editor field refreshes the coordinates. Retain an invisible hook for compatibility. -->
+              <button id="simulateButton" class="button primary hidden" type="button" hidden tabindex="-1" aria-hidden="true">刷新坐标系</button>
+              <button id="refreshAnimationButton" class="button ghost" type="button" title="只重新生成 HTML 动画；若轨迹参数改变，请先刷新坐标系">刷新动画</button>
+              <small class="simulation-refresh-help">编辑参数后按 Enter：保存当前版本并刷新坐标系。动画 HTML 仍需单独刷新。</small>
+              <button id="generateButton" class="button ghost hidden" aria-hidden="true">生成 XML</button>
+              <button id="mujocoCheckButton" class="button ghost hidden" aria-hidden="true">MuJoCo 接触/间隙验证</button>
+            </div>
+            <details class="animation-export-settings">
+              <summary><b>动画 HTML 设置</b></summary>
+              <div class="animation-export-grid">
+                <label>帧率 FPS<input type="number" min="1" max="120" step="1" data-type="number" data-bind="animation_html.fps"></label>
+                <label>单网格最大面数<input type="number" min="1000" max="2000000" step="1000" data-type="number" data-bind="animation_html.max_faces_per_mesh"></label>
+                <label>测距跟随阻尼<input type="number" min="0" max="0.95" step="0.05" data-type="number" data-bind="animation_html.distance_follow_damping"></label>
+                <label class="animation-export-wide" title="生成 HTML 后，距离小于该阈值的测距对会在开启自适应显示时显示">自适应测距显示阈值 mm<input type="number" min="0.001" step="any" value="25" data-type="number" data-bind="animation_html.adaptive_threshold_mm" aria-label="自适应测距显示阈值（毫米）"></label>
+                <label class="animation-export-wide">水印文字<input data-bind="animation_html.watermark_text"></label>
+                <label class="animation-export-wide">水印位置 mm<input data-bind="animation_html.watermark_position_mm" placeholder="0, 0, 0"></label>
+                <label>水印高度 mm<input type="number" min="0.1" step="1" data-type="number" data-bind="animation_html.watermark_size_mm"></label>
+                <label>水印厚度 mm<input type="number" min="0.1" step="1" data-type="number" data-bind="animation_html.watermark_thickness_mm"></label>
+                <label>水印颜色<input type="color" data-bind="animation_html.watermark_color"></label>
+              </div>
+              <small>测距显示阈值默认 25 mm，设置后点击“刷新动画”才会写入新 HTML；开启播放器“自适应显示”后生效。导出文件无需服务器即可打开，包含模型、动画、测距、甘特图和交互控制。</small>
+            </details>
+
+            <!-- 甘特图 UI 栏：放入仿真设置下方，默认折叠 -->
+            <details id="ganttSideDetails" class="gantt-side-wrap">
+              <summary><b>甘特图设置</b></summary>
+              <div class="gantt-side-ui gantt-side-nested">
+                <label class="inline-check gantt-cursor-folded"><input id="ganttCursorVisible" type="checkbox">显示甘特图游标</label>
+                <div class="gantt-side-block">
+                  <div class="gantt-side-title"><span>时序驱动</span><small>拖拽 ↕ 改顺序，点击 ▣ 重命名</small></div>
+                  <div class="gantt-scale-controls gantt-side-scales">
+                    <label>横向缩放 <span class="gantt-range-readout" id="ganttScaleXReadout">100%</span>
+                      <input id="ganttScaleX" type="range" min="30" max="400" value="100"
+                             data-ui-default-bind='{"path":"ui.results.gantt_scale_x","valueFrom":"value","label":"甘特图横向缩放"}'></label>
+                    <label>纵向缩放 <span class="gantt-range-readout" id="ganttScaleYReadout">100%</span>
+                      <input id="ganttScaleY" type="range" min="50" max="240" value="100"
+                             data-ui-default-bind='{"path":"ui.results.gantt_scale_y","valueFrom":"value","label":"甘特图纵向缩放"}'></label>
+                  </div>
+                  <div class="gantt-side-checks">
+                    <div class="gantt-sort-row">
+                      <label class="inline-check"><input id="ganttAutoSort" type="checkbox" checked
+                            data-ui-default-bind='{"path":"ui.results.gantt_auto_sort","valueFrom":"checked","label":"按时间排序"}'>按时间排序</label>
+                      <label class="gantt-sort-direction" title="切换甘特图驱动的时间排序方向">
+                        <span id="ganttSortDirectionText">早到晚</span>
+                        <input id="ganttSortDescending" type="checkbox"
+                               data-ui-default-bind='{"path":"ui.results.gantt_sort_desc","valueFrom":"checked","label":"甘特图时间倒序"}'>
+                        <i aria-hidden="true"></i>
+                      </label>
+                    </div>
+                    <label class="inline-check"><input id="ganttReverse2" type="checkbox"
+                          data-ui-default-bind='{"path":"ui.results.gantt_reverse","valueFrom":"checked","label":"甘特图倒放视图"}'>显示倒放</label>
+                  </div>
+                  <div id="ganttDriveList" class="gantt-drive-list empty-state">运行仿真后显示驱动顺序</div>
+                </div>
+                <div class="gantt-side-block gantt-side-hint">
+                  <small>• 拖动手柄可调整驱动上下顺序（未启用「按时间排序」时生效）</small>
+                  <small>• 双击驱动名（或点 ▣ 键）重命名</small>
+                  <small>• 勾选框：在甘特图显示 / 隐藏该驱动行</small>
+                  <small>• 双击甘特图色块：编辑段参数、颜色、文本</small>
+                  <small>• 右键任一控件（缩放滑块/复选框）可选「设为默认值」（全局所有项目）</small>
+                </div>
+              </div>
+            </details>
+
+            <div id="activeJob" class="job-progress hidden"><div><strong>后台任务</strong><span id="activeJobMessage">准备中</span></div><div class="progress-track"><span id="activeJobBar"></span></div><button id="cancelActiveJob" class="text-button danger">停止</button></div>
+          </aside>
+          <main class="simulation-result-main">
+            <nav class="result-view-tabs"><button class="active" data-result-tab="gantt">甘特图</button><button data-result-tab="axes">坐标系</button><button data-result-tab="animation">动画</button></nav>
+            <article class="panel simulation-gantt-panel" data-result-pane="gantt">
+              <div class="gantt-toolbar"><strong>驱动时序甘特图</strong><select id="ganttFontFamily" class="hidden"><option value="Microsoft YaHei">微软雅黑</option></select><label class="gantt-font-adjust">字号调整 <input id="ganttFontSize" type="number" min="6" max="36" step="1" value="11" aria-label="甘特图字号调整"></label><input id="ganttColor" class="hidden" value="#F9B665"><button id="ganttFullscreen" class="button tiny ghost">⛶ 放大</button><button id="openGanttPopup" class="button tiny primary">⬚ 甘特图弹窗</button><span id="simulationGanttEnd">0 s</span></div>
+              <div class="gantt-result-layout gantt-result-layout-single">
+                <!-- 左侧 UI 栏已移到仿真设置下（details 默认折叠），这里仅保留主画布 -->
+                <section id="simulationGanttWrap" class="gantt-main-wrap gantt-main-wrap-expanded">
+                  <div id="simulationGantt" class="technical-gantt empty-state">当前项目没有驱动段</div>
+                </section>
+              </div>
+            </article>
+            <article class="panel result-viewer-panel hidden" data-result-pane="axes">
+              <div class="result-viewer-toolbar result-axis-main-toolbar">
+                <span id="latestResultLabel" class="axis-visually-hidden" aria-live="polite">运行仿真后编辑曲线</span>
+                <div class="result-axis-toolbar-actions">
+                  <section class="axis-toolbar-module axis-toolbar-layout" aria-label="坐标系布局操作">
+                    <span class="axis-toolbar-module-title" aria-hidden="true">布局</span>
+                    <button id="axisColumnToggle" class="axis-column-toggle" type="button" role="switch" aria-checked="false" aria-label="坐标系双列排列" title="滑动切换单列与双列布局；窄屏幕自动单列">
+                      <span class="axis-column-track" aria-hidden="true"><span class="axis-column-thumb"></span></span><span class="axis-column-current">单列</span>
+                    </button>
+                    <label class="result-layout-picker"><select id="resultLayoutSelect" aria-label="当前坐标系布局"><option value="">当前布局</option><option value="__distance__">测距对布局（自动同步）</option></select></label>
+                    <button id="renameResultLayoutButton" class="button tiny ghost axis-layout-rename" type="button" title="保存或重命名当前布局" aria-label="自定义布局名称">自定义布局名称</button>
+                    <button id="addResultAxisButton" class="button tiny ghost axis-add-quick" type="button" title="在当前布局增加一个坐标系" aria-label="新增坐标系">＋ 坐标系</button>
+                    <details class="axis-toolbar-more axis-layout-more">
+                      <summary title="自适应、增删布局与跨模型导入" aria-label="展开布局管理操作">布局管理</summary>
+                      <div class="axis-toolbar-more-content">
+                        <button id="adaptiveAddResultAxesButton" class="button tiny ghost" type="button" title="按当前模型全部驱动自适应添加同名坐标系">自适应坐标系</button>
+                        <button id="newResultLayoutButton" class="button tiny ghost" type="button" title="新建命名布局，修改自动保存">＋ 布局</button>
+                        <button id="deleteResultLayoutButton" class="button tiny ghost" type="button" title="删除当前自定义布局（默认测距布局不可删除）">－ 布局</button>
+                        <button id="importResultLayoutButton" class="button tiny ghost" type="button" title="从同一项目目录的其他模型导入坐标系布局">⇩ 导入布局</button>
+                      </div>
+                    </details>
+                  </section>
+                  <section class="axis-toolbar-module axis-toolbar-post" aria-label="坐标系后处理操作">
+                    <span class="axis-toolbar-module-title" aria-hidden="true">后处理</span>
+                    <button id="exportNxAfuButton" class="button tiny accent" type="button" title="生成并下载 NX AFU Python 脚本">导出NX脚本</button>
+                    <details class="axis-toolbar-more axis-export-more">
+                      <summary title="展开 CSV、表格、坐标系高度和游标操作" aria-label="展开其他后处理操作">更多</summary>
+                      <div class="axis-toolbar-more-content">
+                        <button id="exportAllAxesButton" class="button tiny primary" type="button">导出 CSV</button>
+                        <button id="exportResultTableButton" class="button tiny ghost" type="button" title="导出 Excel 可打开的合并 TSV 表格">导出表格</button>
+                        <label class="axis-height-toolbar" title="统一调节所有坐标系高度">高度 <output id="axisHeightValue">80 px</output><input id="axisHeightRange" type="range" min="40" max="600" step="10" data-type="number" data-bind="result_layout.height" aria-label="坐标系高度"></label>
+                        <span class="axis-cursor-toolbar" aria-label="曲线游标"><button id="addCursorButton" class="button tiny ghost" type="button">＋ 游标</button><button id="removeCursorButton" class="button tiny ghost" type="button">－ 游标</button></span>
+                      </div>
+                    </details>
+                  </section>
+                </div>
+              </div>
+              <div id="resultAxes" class="result-axes empty-state">尚未配置坐标系</div>
+            </article>
+            <article class="panel result-animation-panel hidden" data-result-pane="animation">
+              <div class="result-viewer-toolbar"><div><strong>项目动画</strong><small id="animationLoadStatus">点击“重新加载”载入交付数据中的最新动画 HTML</small></div><div class="row-actions"><button id="reloadEmbeddedAnimation" class="button tiny ghost">重新加载</button><button id="fullscreenEmbeddedAnimation" class="button tiny ghost" disabled>⛶ 全屏展示</button></div></div>
+              <div id="animationClosureError" class="animation-closure-error hidden" role="alert"></div>
+              <div id="animationLoadProgress" class="animation-load-progress"><div><span id="animationLoadBar"></span></div><small id="animationLoadPercent">0%</small></div>
+              <iframe id="embeddedAnimationFrame" class="embedded-animation-frame hidden" title="项目动画" sandbox="allow-scripts allow-same-origin allow-downloads" allow="fullscreen" allowfullscreen></iframe>
+              <div id="animationEmpty" class="empty-state">尚未生成动画 HTML</div>
+            </article>
+          </main>
+        </div>
+      </section>
+
+      <section class="page hidden" data-page-content="optimization">
+        <div class="split-workspace">
+          <article class="panel control-panel wide">
+            <div class="panel-header"><div><p class="eyebrow">SEARCH SPACE</p><h2>批量优化</h2></div><button id="addRangeButton" class="button tiny ghost">＋ 自变参数</button></div>
+            <div class="form-grid">
+              <label>采样模式<select id="optMode"><option value="grid">顺序遍历</option><option value="random">随机采样</option></select></label>
+              <label>最大次数<input id="optTrials" type="number" min="1"></label>
+              <label>目标变量<input id="optObjective" placeholder="EndTime"></label>
+              <label>优化方向<select id="optDirection"><option value="min">最小</option><option value="max">最大</option></select></label>
+            </div>
+            <div id="rangeList" class="range-list"></div>
+            <button id="optimizeButton" class="button primary full">⌁ 启动优化任务</button>
+          </article>
+          <article class="panel results-panel"><p class="eyebrow">BEST RESULT</p><h2>最优方案</h2><div id="optimizationBest" class="empty-state">运行优化后显示结果</div></article>
+        </div>
+      </section>
+
+      <section class="page hidden" data-page-content="agent">
+        <details class="panel llm-config-panel" open>
+          <summary><span><b>大模型连接</b><small>OPENAI-COMPATIBLE · 密钥仅保存在后端私密配置</small></span><span id="llmConfigStatus" class="badge">未配置</span></summary>
+          <div class="llm-config-grid">
+            <label>API 地址<input id="llmBaseUrl" value="https://yice.byd.com/ai-gate/v1/chat/completions"></label>
+            <label>API 密钥<input id="llmApiKey" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密钥"></label>
+            <label>访问模型<input id="llmModel" list="llmModelOptions" value="DeepSeek-R1-Pro"><datalist id="llmModelOptions"><option value="DeepSeek-R1-Pro"></option></datalist></label>
+            <label>上下文轮数<input id="llmContextRounds" type="number" min="1" max="100" value="20"></label>
+          </div>
+          <div class="llm-context-options"><label class="inline-check"><input id="llmIncludeVariables" type="checkbox" checked>实时变量</label><label class="inline-check"><input id="llmIncludeEvents" type="checkbox" checked>操作日志</label><label class="inline-check"><input id="llmIncludeArtifacts" type="checkbox" checked>运行产物</label><button id="saveLlmConfigButton" class="button tiny primary">保存配置</button><button id="testLlmButton" class="button tiny ghost">测试连接</button></div>
+          <p class="llm-security-note">API 地址、模型和上下文策略进入可审计项目状态；API 密钥不会写入项目 JSON、事件日志、版本快照或下载物。</p>
+        </details>
+        <div class="agent-layout">
+          <article class="agent-hero">
+            <span class="pill">SAFE TOOL AGENT</span>
+            <h2>把工程流程交给<br><em>可审计的智能体</em></h2>
+            <p>智能体只能调用白名单 API。每一步输入、结果和错误都会保留；没有配置 LLM 时仍可按确定性 Skill 工作。</p>
+            <label>选择 Skill<select id="skillSelect"></select></label>
+            <div id="skillOverview" class="skill-overview">选择 Skill 后显示作用和步骤</div>
+            <label>告诉智能体本次目标<textarea id="agentGoal" rows="4" placeholder="例如：检查当前项目，生成模型，然后运行仿真并整理结果。"></textarea></label>
+            <button id="runAgentButton" class="button accent full">✦ 开始执行</button>
+          </article>
+          <article class="panel agent-trace"><div class="panel-header"><div><p class="eyebrow">CONTEXT & EXECUTION</p><h3>对话上下文与执行轨迹</h3></div><span id="conversationWindowBadge" class="badge">20 轮</span></div><div id="agentConversation" class="agent-conversation empty-state">尚无智能体对话</div><div id="agentTrace" class="trace-list empty-state">尚未运行智能体</div></article>
+        </div>
+        <details id="agentBackendPanel" class="panel agent-backend-panel">
+          <summary><span><b>后台任务和下载物</b><small>主要供诊断、LLM 读取和按需下载，默认折叠</small></span><button id="refreshResultsButton" type="button" class="button tiny ghost">↻ 刷新</button></summary>
+          <div class="two-column results-layout">
+            <article class="agent-subpanel"><div class="panel-header"><h3>后台任务</h3></div><div id="allJobs" class="job-list"></div></article>
+            <article class="agent-subpanel"><div class="panel-header"><h3>下载物</h3></div><div id="artifactList" class="artifact-list"></div></article>
+          </div>
+          <article class="agent-subpanel"><div class="panel-header"><h3>任务结果数据</h3></div><pre id="resultInspector" class="code-view">选择一项已完成任务查看结果</pre></article>
+        </details>
+        <article class="panel skill-builder">
+          <div class="panel-header"><div><p class="eyebrow">SKILL BUILDER</p><h3>创建自定义 Skill</h3></div><button id="saveSkillButton" class="button ghost">保存 Skill</button></div>
+          <div class="form-grid"><label>Skill ID<input id="skillId" placeholder="my-workflow"></label><label>名称<input id="skillName" placeholder="我的工作流"></label></div>
+          <label>说明<input id="skillDescription" placeholder="该 Skill 应完成什么"></label>
+          <label>步骤 JSON<textarea id="skillSteps" class="code-input" rows="7">[
+  {"tool":"validate_project","arguments":{}},
+  {"tool":"generate_project","arguments":{}},
+  {"tool":"run_simulation","arguments":{}}
+]</textarea></label>
+        </article>
+      </section>
+
+    </main>
+  </div>
+  <dialog id="ganttSegmentDialog" class="gantt-segment-dialog">
+    <form method="dialog" id="ganttSegmentForm">
+      <header><div><strong>编辑甘特图运动段</strong><small id="ganttDialogSegmentName"></small></div><button type="button" data-gantt-dialog-cancel class="compact-delete" aria-label="关闭">×</button></header>
+      <div class="gantt-dialog-grid">
+        <label class="gantt-dialog-field"><span>起始时间 / 表达式</span><span><input id="ganttDialogStart"><input id="ganttDialogArchiveStartTime" type="checkbox" title="添加为关键数据" aria-label="将起始时间添加为关键数据"></span></label>
+        <label class="gantt-dialog-field"><span><select id="ganttDialogTravelMode" aria-label="行程输入方式"><option value="travel">行程</option><option value="end_position">结束位置</option></select></span><span><input id="ganttDialogTravel"><input id="ganttDialogArchiveTravel" type="checkbox" title="添加为关键数据" aria-label="将行程或结束位置添加为关键数据"></span></label>
+        <label class="gantt-dialog-field"><span><select id="ganttDialogRateMode" aria-label="速度或时长输入方式"><option value="speed">速度</option><option value="duration">时长</option></select></span><span><input id="ganttDialogRate"><input id="ganttDialogArchiveRate" type="checkbox" title="添加为关键数据" aria-label="将速度或时长添加为关键数据"></span></label>
+        <label class="gantt-color-field">色块颜色<button type="button" id="ganttDialogColorButton" title="选择色块颜色"><span></span></button><input id="ganttDialogColor" type="color" value="#F9B665" aria-label="色块颜色"></label>
+        <label class="gantt-archive-check"><input id="ganttDialogArchiveStart" type="checkbox"> 起始位置关键数据</label>
+        <label class="gantt-archive-check"><input id="ganttDialogArchiveEnd" type="checkbox"> 结束位置关键数据</label>
+      </div>
+      <p id="ganttDialogReadonly" class="gantt-dialog-note hidden">当前项目只读；起始时间、结束行程和速度不可改，仍可调整本机显示颜色。</p>
+      <footer><button type="button" data-gantt-dialog-cancel class="button tiny ghost">取消</button><button type="submit" id="ganttDialogSave" value="default" class="button tiny primary">保存</button></footer>
+    </form>
+  </dialog>
+  <aside id="globalAssistant" class="global-assistant collapsed" aria-label="全局 LLM 助手">
+    <button id="assistantToggle" class="assistant-toggle" type="button" aria-expanded="false"><span>AI</span></button>
+    <div class="assistant-panel">
+      <header><div><strong>全局工程助手</strong><small>变量检索 · 操作需审批 · 可终止</small></div><button id="assistantClose" class="button tiny ghost" type="button">收起</button></header>
+      <div id="assistantMessages" class="assistant-messages"><div class="assistant-empty">可以询问当前项目，或让我检索变量并生成可审阅的操作建议。</div></div>
+      <div class="assistant-composer">
+        <textarea id="assistantInput" rows="3" placeholder="例如：把仿真步长改为 0.002"></textarea>
+        <div><button id="assistantStop" class="button tiny danger" type="button" disabled>终止</button><button id="assistantSend" class="button tiny primary" type="button">发送</button></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ 甘特图弹窗（复刻 Qt Gantt Popup） ============ -->
+  <div id="ganttPopup" class="gantt-popup hidden" role="dialog" aria-modal="true" aria-labelledby="ganttPopupTitle">
+    <div class="gantt-popup-frame">
+      <!-- 顶栏 -->
+      <div class="gantt-popup-header">
+        <div class="gantt-popup-brand">
+          <div class="gantt-popup-logo">ST</div>
+          <div class="gantt-popup-title-box">
+            <h2 id="ganttPopupTitle" class="gantt-popup-title">MuJoCo Studio · 甘特图弹窗</h2>
+            <p class="gantt-popup-subtitle">结果查看时序图 · 缩放浏览 · PNG 导出</p>
+          </div>
+        </div>
+        <div class="gantt-popup-right">
+          <span id="ganttPopupBadge" class="gantt-popup-badge">0 行 / 0 段</span>
+          <button id="ganttPopupClose" class="gantt-popup-close" aria-label="关闭甘特图弹窗">×</button>
+        </div>
+      </div>
+
+      <div class="gantt-popup-default-row">
+        <label class="inline-check" title="勾选后保存当前文本类别、文本属性和文本内容；取消勾选后清除预设。">
+          <input id="ganttPSetDefault" type="checkbox">设置为默认
+        </label>
+      </div>
+
+      <!-- 工具栏 -->
+      <div class="gantt-popup-toolbar">
+        <div class="gantt-tool-group">
+          <label>横向缩放：</label>
+          <input id="ganttPHZoom" type="range" min="50" max="500" value="100" class="gantt-range">
+          <span id="ganttPHZoomLabel" class="gantt-range-label">100%</span>
+        </div>
+        <div class="gantt-tool-group">
+          <label>纵向缩放：</label>
+          <input id="ganttPVZoom" type="range" min="60" max="600" value="450" class="gantt-range">
+          <span id="ganttPVZoomLabel" class="gantt-range-label">450%</span>
+          <button id="ganttPResetZoom" class="button tiny ghost">恢复默认</button>
+        </div>
+        <div class="gantt-tool-group">
+          <label>甘特图字号：</label>
+          <input id="ganttPFontSize" type="number" min="6" max="72" value="16" class="gantt-num">
+          <button id="ganttPBoldLabel" class="button tiny ghost active" aria-pressed="true" title="按下后加粗甘特图文字，再按一次取消加粗">B</button>
+        </div>
+        <div class="gantt-tool-group">
+          <label>坐标轴字号：</label>
+          <input id="ganttPDriverSize" type="number" min="6" max="72" value="20" class="gantt-num">
+          <button id="ganttPBoldAxis" class="button tiny ghost active" aria-pressed="true" title="按下后加粗左侧名称，再按一次取消加粗">B</button>
+        </div>
+        <div class="gantt-tool-group gapless">
+          <button id="ganttPSegmentColor" class="button tiny ghost gantt-segment-color-btn" title="修改所有同段号色块的颜色；双击色块仍可只修改单个色块。">调整所选运动段颜色</button>
+          <button id="ganttPResetLabels" class="button tiny ghost" title="将全部时间/行程文本复位到色块中心并恢复显示；默认按色块明暗自动选择黑/白色，用户自定义颜色保持优先。">复位并自适应文本</button>
+          <button id="ganttPBlackFont" class="button tiny ghost" title="将甘特图中的时间、行程、驱动名称和坐标轴文字统一为黑色。">所有字体黑色</button>
+        </div>
+        <div class="gantt-tool-group check-group">
+          <label class="inline-check"><input id="ganttPShowTime" type="checkbox" checked>显示每段时间</label>
+          <label class="inline-check"><input id="ganttPShowTravel" type="checkbox" checked>显示每段行程</label>
+        </div>
+        <div class="gantt-tool-group gapless gantt-tool-right">
+          <button id="ganttPLoadCache" class="button tiny accent" title="将当前甘特图保存到项目缓存（core/artifacts/gantt_cache/latest_gantt.png + latest_gantt.json），供总览等界面快速预览。">↻ 保存到缓存</button>
+          <button id="ganttPExportPng" class="button tiny primary">导出 PNG</button>
+        </div>
+      </div>
+
+      <!-- 画布区 -->
+      <div id="ganttPViewport" class="gantt-popup-viewport">
+        <canvas id="ganttPCanvas" width="1200" height="700"></canvas>
+        <div id="ganttPLabelLayer" class="gantt-popup-label-layer"></div>
+      </div>
+
+      <!-- 状态栏 -->
+      <div id="ganttPStatus" class="gantt-popup-status">就绪</div>
+    </div>
+  </div>
+
+  <!-- 甘特图：标签颜色/内容编辑对话框 -->
+  <dialog id="ganttLabelDialog" class="gantt-label-dialog">
+    <form method="dialog">
+      <header>
+        <strong>设置文本颜色和内容</strong>
+        <button value="cancel" class="compact-delete" aria-label="关闭">×</button>
+      </header>
+      <div>
+        <label>文本内容
+          <input id="ganttLabelDialogText" type="text" placeholder="输入要显示在甘特图色块上的文本">
+        </label>
+        <div class="gantt-label-color-row">
+          <label>文本颜色</label>
+          <span id="ganttLabelDialogPreview" class="gantt-label-color-preview">#2B353C</span>
+          <button type="button" id="ganttLabelDialogChoose" class="button tiny ghost">选择颜色</button>
+          <input id="ganttLabelDialogColor" type="color" value="#2B353C" class="gantt-hidden-color">
+        </div>
+        <p class="gantt-label-note">提示：双击文本后可在这里修改文字；点击「选择颜色」可打开颜色选择器。</p>
+      </div>
+      <footer>
+        <button value="cancel" class="button tiny ghost">取消</button>
+        <button id="ganttLabelDialogSave" value="default" class="button tiny primary">确定</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="modelAssetManagerDialog" class="model-asset-manager-dialog">
+    <form method="dialog">
+      <header>
+        <div><p class="eyebrow">MODEL ASSET LIBRARY</p><h2 id="modelAssetDialogTitle">数模资产管理</h2><small id="modelAssetRootPath">模型类型公共数模资产库</small></div>
+        <button class="compact-delete dialog-close-x" value="close" aria-label="关闭">×</button>
+      </header>
+      <div class="model-asset-toolbar">
+        <label>模型类型<select id="modelAssetCategorySelect"></select></label>
+        <div class="model-asset-toolbar-actions">
+          <button id="modelAssetNewVersionButton" class="button tiny primary" type="button">新建版本</button>
+          <button id="modelAssetCopyVersionButton" class="button tiny ghost" type="button">复制版本</button>
+          <button id="modelAssetDeleteVersionButton" class="button tiny danger" type="button">删除版本</button>
+        </div>
+      </div>
+      <div class="model-asset-manager-body">
+        <aside>
+          <div class="compact-heading"><strong>数模版本文件夹</strong><span id="modelAssetVersionCount" class="badge">0</span></div>
+          <div id="modelAssetVersionList" class="model-asset-version-list"></div>
+        </aside>
+        <section>
+          <div class="model-asset-file-heading"><div><strong id="modelAssetVersionTitle">请选择数模版本</strong><small id="modelAssetVersionMeta">一个版本对应服务器上的一个文件夹</small></div><div class="model-asset-upload-actions"><button id="modelAssetUploadFilesButton" class="button tiny ghost" type="button">上传文件</button><button id="modelAssetUploadFolderButton" class="button tiny primary" type="button">上传文件夹</button></div></div>
+          <div id="modelAssetFileList" class="model-asset-file-list"><p class="empty-state">请选择左侧数模版本查看文件。</p></div>
+        </section>
+      </div>
+      <footer><small id="modelAssetBindingSummary">模型项目只保存 <code>@model_assets/模型类型/数模版本</code> 引用；被模型使用的版本不能删除。</small><div class="model-asset-footer-actions"><button id="modelAssetConfirmBindingButton" type="button" class="button primary" hidden>确认绑定</button><button id="modelAssetClearFolderButton" type="button" class="button danger" hidden>清空</button><button value="close" class="button ghost">关闭</button></div></footer>
+      <input id="modelAssetFilesInput" class="hidden" type="file" accept=".stl,.obj,.mtl,.png,.jpg,.jpeg,.bmp,.tga,.webp" multiple>
+      <input id="modelAssetFolderInput" class="hidden" type="file" accept=".stl,.obj,.mtl,.png,.jpg,.jpeg,.bmp,.tga,.webp" webkitdirectory directory multiple>
+    </form>
+  </dialog>
+
+  <dialog id="modelFilesDialog" class="model-files-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow">SERVER FILES</p><h2 id="modelFilesTitle">模型文件</h2><span id="modelClientApiStatus" class="client-status-light offline">● API 2.16.11.6 · MuJoCo unknown</span></div><div id="modelLocalActions" class="model-local-actions hidden"><span id="modelClientStatus" class="client-status-light offline">● 公共资产库</span><small id="modelFilesPath"></small></div><button class="compact-delete dialog-close-x" value="close" aria-label="关闭">×</button></header>
+      <div id="modelFilesBody" class="model-files-body"></div>
+      <footer>
+        <button id="modelDeliveryClearButton" class="button danger" type="button" hidden>清空文件</button>
+        <button id="modelDeliveryDownloadFolderButton" class="button primary" type="button" hidden>全部批量下载</button>
+        <button id="modelJsonUploadButton" class="button ghost" type="button">上传 project.json</button>
+      </footer>
+      <input id="modelJsonFileInput" class="hidden" type="file" accept=".json,application/json">
+    </form>
+  </dialog>
+
+
+  <dialog id="timeSeriesImportDialog" class="time-series-import-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow">TIME SERIES LIBRARY</p><h2>时序选择与保存</h2><small>当前时序会随日常编辑及 Enter 同步；仅主动新建／导入／切换时提示保存原时序</small></div><button class="compact-delete dialog-close-x" value="close" aria-label="关闭">×</button></header>
+      <div class="time-series-import-body">
+        <section><h3>本地文件夹</h3><p>可导入 TSJSON、旧版主 CSV、Studio 动画 HTML；Python 脚本需包含静态 MUJOCO_TIMING_JSON 清单。</p><button id="timeSeriesChooseFileButton" type="button" class="button primary">选择单个 HTML / PY / TSJSON 文件</button><input id="timeSeriesLocalFileInput" class="hidden" type="file" accept=".tsjson,.csv,.html,.py"><button id="timeSeriesChooseLocalButton" type="button" class="button ghost">选择本地文件夹</button><input id="timeSeriesLocalFolderInput" class="hidden" type="file" accept=".tsjson,.csv,.html,.py,application/json,text/csv,text/html,text/x-python" webkitdirectory directory multiple></section>
+        <section class="time-series-current-library"><h3>模型时序库</h3><p class="time-series-hint">从下拉菜单选择当前或其他模型，再选时序替换本模型驱动；原模型的 TSJSON 不会修改。必要时先提示保存当前时序。</p><label class="time-series-source-picker">时序来源模型 <select id="timeSeriesSourceProject" aria-label="时序来源模型"><option value="">正在加载模型…</option></select></label><div class="row-actions"><button id="timeSeriesNewBlankButton" type="button" class="button ghost">＋ 新建空白时序</button></div><div id="timeSeriesServerList" class="time-series-server-list"><p class="empty-state">正在读取时序库…</p></div><div class="time-series-save-row"><label for="timeSeriesSaveName">将当前驱动另存为 TSJSON 快照</label><div><input id="timeSeriesSaveName" type="text" maxlength="100" placeholder="例如：高速回转 · 方案 B" autocomplete="off"><button id="timeSeriesSaveCurrentButton" type="button" class="button primary">保存为 TSJSON</button></div><small>仅保存当前驱动及运动段，不要求运行仿真；结果通道留空，避免误用过期数据。</small></div></section>
+      </div>
+      <footer><small>导入替换草稿；保存 TSJSON 写入当前模型时序库。均需要有效签出权限。</small><button class="button ghost" value="close">关闭</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="resultLayoutImportDialog" class="result-layout-import-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow">LAYOUT IMPORT</p><h2>导入其他模型的坐标系布局</h2><small>仅从同一 Hub 项目目录选取；源模型只读，不会改变其布局。</small></div><button class="compact-delete dialog-close-x" value="cancel" aria-label="关闭">×</button></header>
+      <div class="result-layout-import-body">
+        <label>来源模型<select id="resultLayoutImportProject"><option value="">请选择模型</option></select></label>
+        <label>选择布局<select id="resultLayoutImportPreset"><option value="">先选择模型</option></select></label>
+        <p id="resultLayoutImportInfo" role="status">导入会新建一个命名布局；无法安全映射的曲线将标为未选择。</p>
+      </div>
+      <footer><button type="button" id="confirmResultLayoutImportButton" class="button primary">导入到当前模型</button><button class="button ghost" value="cancel">取消</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="csvExportModeDialog" class="csv-export-mode-dialog">
+    <form method="dialog">
+      <header><div><p class="eyebrow">CSV EXPORT</p><h2>批量导出坐标系 CSV</h2><small id="csvExportModeCount">请选择导出方式</small></div><button class="compact-delete dialog-close-x" value="close" aria-label="关闭">×</button></header>
+      <div class="csv-export-mode-options">
+        <button type="button" class="button primary" data-csv-export-mode="separate"><b>分别导出</b><span>每个坐标系单独下载 CSV，同时保存到交付数据 / 表格文件夹</span></button>
+        <button type="button" class="button accent" data-csv-export-mode="combined"><b>合并导出</b><span>下载 time + 每个坐标系一列纵坐标的普通 CSV；表格写交付数据，TSJSON 写时序库</span></button>
+      </div>
+      <footer><small>V2.15.6 起时序库仅保存 TSJSON，全部 CSV 均归档到交付数据 / 表格文件夹。</small><button class="button ghost" value="close">取消</button></footer>
+    </form>
+  </dialog>
+
+  <!-- V2.16.6: save latest on check-in; optionally create OR replace a named history version. -->
+  <dialog id="checkInArchiveChoiceDialog" class="check-in-choice-dialog check-in-finish-dialog" aria-labelledby="checkInFinishTitle">
+    <form method="dialog" id="checkInFinishForm">
+      <header><div><p class="eyebrow">FINISH EDITING</p><h2 id="checkInFinishTitle">保存并签入模型</h2><small>将当前模型保存为最新版本，结束编辑并释放签出占用。</small></div><button class="button ghost" value="cancel" formnovalidate aria-label="取消">取消</button></header>
+      <div class="check-in-finish-body">
+        <section class="check-in-finish-settings" aria-label="签入保存选项">
+          <p class="check-in-current-explain"><b>✓ 保存当前最新版本</b><span>每次签入都会保存当前模型。无需额外创建历史版本，其他人也能继续使用最新内容。</span></p>
+          <label class="check-in-anchor-toggle"><input type="checkbox" id="checkInCreateAnchor"> <span><strong>保存到版本历史（可选）</strong><small>可新建一个历史版本，也可以更新已有的普通历史版本。</small></span></label>
+          <div id="checkInAnchorFields" class="check-in-anchor-fields hidden">
+            <fieldset class="check-in-version-mode"><legend>保存方式</legend>
+              <label><input type="radio" name="checkInFinishVersionMode" id="checkInVersionNew" value="new" checked> 新建历史版本</label>
+              <label><input type="radio" name="checkInFinishVersionMode" id="checkInVersionOverwrite" value="overwrite" disabled> 覆盖已有历史版本</label>
+            </fieldset>
+            <label id="checkInOverwriteTargetRow" class="check-in-overwrite-target hidden">要覆盖的版本
+              <select id="checkInOverwriteTarget"><option value="">请从右侧历史列表选择</option></select>
+              <small>只能覆盖普通历史版本；基线与锁定版本不可覆盖。覆盖后原快照将被替换。</small>
+            </label>
+            <label>版本名称<input id="checkInAnchorName" maxlength="160" placeholder="例如：结构方案评审 · 初稿" autocomplete="off"></label>
+            <label>版本说明（选填）<textarea id="checkInAnchorLog" rows="3" maxlength="2000" placeholder="记录本次版本有哪些重要变化"></textarea></label>
+          </div>
+        </section>
+        <aside class="check-in-version-history" aria-label="当前模型历史版本">
+          <div class="check-in-version-history-heading"><div><h3>已有历史版本</h3><small id="checkInVersionCount">正在读取…</small></div><button type="button" class="button ghost" id="checkInVersionRefresh" aria-label="重新读取历史版本">刷新</button></div>
+          <p class="check-in-version-history-hint">来自当前模型的存档日志。点击普通历史版本即可选择覆盖；基线与锁定版本仅供查看。</p>
+          <div id="checkInVersionList" class="check-in-version-list" role="list" aria-live="polite"><p class="empty-state">正在读取历史版本…</p></div>
+        </aside>
+      </div>
+      <footer><small>不保存到版本历史，也不会丢失当前最新模型或删除已有历史版本。</small><button class="button ghost" value="cancel" formnovalidate>继续编辑</button><button class="button primary" value="confirm">保存并签入</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="checkInArchiveEditorDialog" class="check-in-archive-dialog">
+    <form method="dialog" class="check-in-archive-panel">
+      <header><div><p class="eyebrow">VERSION HISTORY</p><h2>保存到版本历史</h2><small>保存当前模型为可恢复的历史版本，不影响当前工作版本</small></div><button class="button ghost" value="cancel" formnovalidate aria-label="取消存档">取消</button></header>
+      <fieldset class="check-in-mode-fields"><legend>保存方式</legend>
+        <label><input type="radio" name="checkInArchiveMode" value="new" checked> 新建历史版本</label>
+        <label><input type="radio" name="checkInArchiveMode" value="overwrite"> 覆盖已有历史版本</label>
+      </fieldset>
+      <label id="checkInArchiveTargetRow" class="check-in-archive-target hidden">选择要覆盖的普通存档版本
+        <select id="checkInArchiveTarget"><option value="">请选择存档</option></select>
+        <small>仅能覆盖普通存档；基线和锁定版本不可覆盖。覆盖后原快照被替换。</small>
+      </label>
+      <label>版本名称<input id="checkInArchiveName" required maxlength="160" autocomplete="off" placeholder="例如：机构参数调整前 · 版本 01"></label>
+      <label>版本备注（选填）<textarea id="checkInArchiveLog" maxlength="2000" rows="4" placeholder="记录重要参数和以后恢复时的参考信息"></textarea></label>
+      <p class="archive-lightweight-note">✓ 普通存档仅保存模型 JSON 与日志，不复制 STL/OBJ 数模文件；回档时复用公共数模资产。基线冻结另行保存必需的数模快照。</p>
+      <footer><button class="button ghost" value="cancel" formnovalidate>取消</button><button class="button primary" value="confirm">保存历史版本</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="baselineLogDialog" class="baseline-log-dialog">
+    <form method="dialog" class="baseline-log-panel">
+      <header>
+        <div><p class="eyebrow">BASELINE RELEASE</p><h2>确认基线信息</h2></div>
+        <button class="button ghost" value="cancel" aria-label="取消打基线">取消</button>
+      </header>
+      <p class="baseline-log-notice">已自动读取该模型最新的存档日志；基线模型名称和更新日志都可在确认前修改。若名称与当前文件夹已有模型重名，系统会自动追加 <code>_001</code>、<code>_002</code>… 后缀。</p>
+      <label>基线模型名称<input id="baselineNameText" maxlength="160" required placeholder="请输入基线模型名称"></label>
+      <label>更新日志<textarea id="baselineLogText" rows="7" maxlength="2000" placeholder="请输入本次基线更新日志"></textarea></label>
+      <footer>
+        <button class="button ghost" value="cancel">取消</button>
+        <button id="baselineLogConfirmButton" class="button primary" value="confirm">确认并打基线</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="accountDialog" class="account-dialog">
+    <form method="dialog" class="account-panel">
+      <header><div><p class="eyebrow">ACCESS CONTROL</p><h2>账号管理</h2></div><button class="button ghost" value="close">关闭</button></header>
+      <p id="accountModeHint" class="account-mode-hint"></p>
+      <section><h3>账号</h3><div id="accountList" class="account-list"></div></section>
+      <section><h3>新增账号</h3><div class="account-create-grid">
+        <label>用户名<input id="accountUsername" autocomplete="off"></label>
+        <label>初始密码<input id="accountPassword" type="password" autocomplete="new-password"></label>
+        <label>角色<select id="accountRole"><option value="guest">游客</option><option value="engineer">工程师</option></select></label>
+        <button id="accountCreateButton" class="button primary" type="button">新增</button>
+      </div></section>
+      <section id="adminModePasswordSection"><h3>管理员模式密码</h3><div class="account-password-row"><input id="adminModeNewPassword" type="password" autocomplete="new-password" placeholder="输入新密码"><button id="adminModePasswordButton" class="button ghost" type="button">更新密码</button></div></section>
+      <section id="storageLocationSection" class="hidden"><h3>项目数据地址</h3>
+        <p id="storageLocationHelper" class="storage-location-helper">自动识别部署系统：Linux 默认向上 2 级，Windows 默认向上 4 级寻找 <code>V2_projec</code>。显式保存的设置优先。</p>
+        <div class="storage-location-grid">
+          <label class="storage-level-label">向上层级<input id="storageAncestorLevels" type="number" min="1" max="8" step="1" value=""></label>
+          <label class="storage-base-label">数据位置（可选）<input id="storageBasePath" type="text" autocomplete="off" placeholder="父目录或 V2_projec；留空则自动查找"></label>
+          <div class="storage-location-actions"><button id="storageBrowseButton" class="button ghost" type="button">选择目录</button><button id="storageProbeButton" class="button ghost" type="button">查找</button><button id="storageSaveButton" class="button primary" type="button">保存</button></div>
+        </div>
+        <p id="storageLocationStatus" class="storage-location-status">读取数据地址中…</p>
+        <details class="storage-location-diagnostics"><summary>诊断信息</summary><div>
+          <label>Server 代码地址<input id="storageServerPath" type="text" readonly></label>
+          <label>当前运行数据根<input id="storageActiveRoot" type="text" readonly></label>
+          <label>本次识别路径<input id="storageCandidatePath" type="text" readonly></label>
+        </div></details>
+        <small>保存后需重启 Server 才会切换当前数据根；环境变量 <code>MUJOCO_STUDIO_DATA</code> 存在时仍以环境变量为准。</small>
+      </section>
+    </form>
+  </dialog>
+
+  <script src="/assets/mapping_math.js?v=2.16.11.6" defer></script>
+  <script src="/assets/login_glb_viewer.js?v=2.16.11.6" defer></script>
+  <script src="/assets/local_drafts.js?v=2.16.11.6" defer></script>
+  <script src="/assets/result_layouts.js?v=2.16.11.6" defer></script>
+  <script src="/assets/app.js?v=2.16.11.6" defer></script>
+</body>
+</html>

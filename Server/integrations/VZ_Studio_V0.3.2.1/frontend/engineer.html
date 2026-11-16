@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+  <title>VZ MuJoCo Studio · 工程师界面</title><link rel="stylesheet" href="/static/studio.css">
+</head>
+<body class="vz-integrated-engineer">
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="#model"><span class="brand-mark">VZ</span><span><strong>VZ Studio</strong><small>V0.3.2.1 · Integrated</small></span></a>
+    <div class="model-heading"><strong>模型文件夹</strong></div>
+    <div id="modelList" class="model-list"></div>
+    <div class="sidebar-actions single-action"><button id="deleteModelButton" class="button tiny danger">移除模型</button></div>
+    <div class="sidebar-footer"><span class="status-dot"></span><span id="vzActivePort">无需账号 · 当前端口</span><button id="openClientButton" class="text-button">用户网址 ↗</button></div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div class="integrated-page-title"><nav id="navigation" class="engineer-page-tabs" aria-label="工程师页面"><a href="#model" data-page="model" class="active">驱动设置</a><a href="#time-series" data-page="time-series">时序库</a></nav><small>层级建模由 MuJoCoHub 维护 · Hub 同步时序只读，复制后可在 VZ 编辑</small></div>
+      <div class="top-actions"><span id="dirtyBadge" class="badge hidden">未保存</span><button id="fastExportButton" class="button ghost">快速渲染</button><button id="perfectExportButton" class="button perfect">高质量渲染</button><button id="saveButton" class="button primary">保存模型</button></div>
+    </header>
+    <section id="toastRegion" class="toast-region"></section>
+    <section class="page" data-page-content="model">
+      <div class="model-control-bar panel"><label class="model-name-top"><span>模型名称</span><input id="modelNameInput" maxlength="160"></label><div class="scene-coordinate-inline" title="支持 Point(x, y, z)，也支持中英文逗号分隔；单位 mm"><label><span>硬点坐标</span><input id="hardPointCoordinate" data-scene-coordinate="hard_point_mm" autocomplete="off" placeholder="Point(0, 0, 0)"></label><label><span>H 点坐标</span><input id="hPointCoordinate" data-scene-coordinate="h_point_mm" autocomplete="off" placeholder="0, 0, 0"></label></div><button id="materialEditorButton" class="button accent" title="在独立窗口中为场景内对象设置 PBR 材质">◇ 材质设置</button><button id="perfectRenderSettingsButton" class="button premium" title="快速渲染用于日常检查，高质量渲染用于最终展示">✦ HTML渲染设置</button><span id="projectRevision" class="mesh-root-label">—</span></div>
+      <div class="section-intro drive-section-intro"><div><h2>动作</h2><p>每个动作独立绑定运动副、电机 0% / 100% 对应位置、速度与动作模式。</p></div><div class="row-actions"><button id="adaptiveAddDriveButton" class="button ghost">自适应创建动作</button><button id="addDriveButton" class="button primary">＋ 创建动作</button></div></div>
+      <div class="drive-editor-column"><div id="driveList" class="stack-list activity-part-list"></div></div>
+    </section>
+    <section class="page engineer-time-series-page hidden" data-page-content="time-series">
+      <div class="engineer-time-series-layout">
+        <aside class="time-series-browser panel">
+          <div class="time-series-browser-head"><div><strong>时序库列表</strong><small>当前模型 · Hub 同步项只读</small></div><div class="time-series-list-actions"><button id="timeSeriesCreateButton" class="button tiny ghost" title="按当前模型驱动创建 VZ 本地时序">＋</button><button id="timeSeriesDeleteButton" class="button tiny danger" title="删除所选 VZ 本地副本" disabled>−</button><button id="timeSeriesCopyButton" class="button tiny ghost" title="复制所选时序后编辑" disabled>复制</button><button id="timeSeriesRenameButton" class="button tiny ghost" title="修改 VZ 本地副本名称" disabled>重命名</button></div></div>
+          <div id="timeSeriesLibraryList" class="time-series-library-list"><div class="empty-inline">选择模型后读取时序库</div></div>
+        </aside>
+        <article class="time-series-gantt-panel panel">
+          <header class="time-series-gantt-head"><div><strong id="timeSeriesGanttTitle">时序甘特图</strong><small id="timeSeriesGanttMeta">选择左侧时序查看控制顺序</small></div><div class="time-series-gantt-head-actions"><div class="time-series-gantt-legend"><span><i class="uniform"></i>匀速 / 缓起缓停</span><span><i class="variable"></i>变速（映射/点表/CSV）</span></div><button id="timeSeriesGanttFullscreen" class="button tiny ghost" title="放大/还原甘特图">⛶ 放大</button></div></header>
+          <details id="timeSeriesGanttSettings" class="time-series-gantt-settings">
+            <summary>甘特图设置 <small>复用二代 WEB 甘特图交互</small></summary>
+            <div class="time-series-gantt-settings-body">
+              <div class="time-series-gantt-controls">
+                <label>横向缩放 <output id="timeSeriesGanttScaleXReadout">100%</output><input id="timeSeriesGanttScaleX" type="range" min="30" max="400" value="100"></label>
+                <label>纵向缩放 <output id="timeSeriesGanttScaleYReadout">100%</output><input id="timeSeriesGanttScaleY" type="range" min="50" max="240" value="100"></label>
+                <label class="inline-check"><input id="timeSeriesGanttCursorVisible" type="checkbox">显示甘特图游标</label>
+                <label class="inline-check"><input id="timeSeriesGanttAutoSort" type="checkbox" checked>按时间排序</label>
+                <label class="inline-check"><input id="timeSeriesGanttSortDesc" type="checkbox">时间倒序</label>
+                <label class="inline-check"><input id="timeSeriesGanttReverse" type="checkbox">显示倒放</label>
+              </div>
+              <div><div class="time-series-drive-settings-title"><b>时序驱动</b><small>拖拽 ↕ 改顺序；双击名称重命名；勾选显示/隐藏</small></div><div id="timeSeriesGanttDriveList" class="time-series-drive-settings-list"><div class="empty-inline">选择时序后显示驱动</div></div></div>
+            </div>
+          </details>
+          <div id="timeSeriesGantt" class="time-series-gantt empty-state">当前没有可显示的时序</div>
+          <footer class="time-series-gantt-help">Hub 同步时序不能直接修改。先“复制”为 VZ 副本；双击副本色块可修改起始时间、速度/时长和行程。甘特图缩放、排序、倒放、游标、驱动显隐/重命名/拖拽顺序只影响 VZ 显示，不回写 Hub。</footer>
+        </article>
+      </div>
+    </section>
+    <section id="simulationResult" class="simulation-result hidden"></section>
+
+    <!-- Compatibility-only nodes keep VZ 0.3.2.1's proven data/editing engine intact.
+         They are not navigation or user-facing functions in the integrated UI. -->
+    <div class="integration-legacy-hidden" aria-hidden="true">
+      <button id="generateXmlButton"></button><button id="simulateButton"></button>
+      <input id="localMeshPath" value="服务端托管数模目录"><button id="assetManagerButton"></button><button id="repairMeshesButton"></button>
+      <button id="importModelingInfoButton"></button><button id="exportModelingInfoButton"></button><input id="modelingInfoInput" type="file">
+      <button id="addLayerButton"></button><div id="layerTreeTabs"><button class="layer-tree-tab active">全部</button></div><button class="tree-root active" data-action="select-root">root</button><div id="layerTree"></div><div id="layerDetails"></div>
+      <span id="meshFileCount"></span><input id="meshSearch"><div id="meshFileList"></div><input id="meshInput" type="file" multiple>
+    </div>
+  </main>
+</div>
+<div id="modalRoot"></div><script src="/static/viewer.js"></script><script src="/static/engineer.js?v=ports1"></script><script src="/static/material-editor.js"></script>
+</body></html>
